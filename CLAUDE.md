@@ -9,14 +9,13 @@ Brain is a knowledge base ingestion pipeline for customer service (客服) conte
 ## Build & Run
 
 - **Install dependencies**: `uv sync`
-- **Run the MVP ingestion pipeline**: `uv run python mvp_ingest.py`
-- **Run main**: `uv run python main.py` (currently a placeholder)
+- **Run the MVP ingestion pipeline**: `uv run python main.py`
 
 All dependencies are in `pyproject.toml`; not yet declared there explicitly but required at runtime: `openai`, `elasticsearch[async]`, `pypdf`, `python-docx`, `pandas`, `openpyxl`, `pypdfium2`, `mineru-vl-utils`.
 
 ## Architecture
 
-### `mvp_ingest.py` — the core pipeline
+### `main.py` — the core pipeline
 
 A self-contained ingestion script (~1300 lines, zero project imports). The execution flow is:
 
@@ -41,17 +40,13 @@ A self-contained ingestion script (~1300 lines, zero project imports). The execu
 
 ### Configuration
 
-All config lives in the `Config` dataclass in `mvp_ingest.py` (lines 76-105). Key parameters:
+All config lives in the `Config` dataclass in `main.py` (lines 76-105). Key parameters:
 - `input_dir` — document source directory (recursive scan)
 - `project` — project name, used for ES index naming
 - `llm_base_url` / `llm_model` — OpenAI-compatible LLM endpoint
 - `es_url` — Elasticsearch endpoint
 - `mineru_server` — optional remote MinerU OCR server for PDF
 - `qa_limit` / `qa_generalization` / `chunk_size` / `chunk_overlap`
-
-### `main.py`
-
-Currently a placeholder (`print("Hello from brain!")`). The real pipeline is in `mvp_ingest.py`.
 
 ### No tests yet
 
