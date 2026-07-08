@@ -54,6 +54,7 @@ MVP 入库脚本 — 自包含的知识库入库流水线
 """
 
 from __future__ import annotations
+import asyncio
 
 import csv
 import hashlib
