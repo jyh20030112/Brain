@@ -82,6 +82,7 @@ class Config:
     llm_model: str = ""
 
     # ---- Embedding ----
+    embedding_provider: str = "openai"    # "openai" 或 "ollama"
     embedding_url: str = ""               # 留空则使用 llm_base_url
     embedding_model: str = ""
     embedding_dim: int = 1024
@@ -113,6 +114,7 @@ class Config:
             llm_base_url=os.getenv("LLM_BASE_URL", ""),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_model=os.getenv("LLM_MODEL", ""),
+            embedding_provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
             embedding_url=os.getenv("EMBEDDING_URL", ""),
             embedding_model=os.getenv("EMBEDDING_MODEL", "bge-m3"),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
@@ -587,23 +589,34 @@ DEFAULT_QUESTIONS = [
 
 
 class LLMClient:
-    """OpenAI 兼容的 LLM + Embedding 客户端。"""
+    """LLM + Embedding 客户端，支持 OpenAI 兼容接口和 Ollama。"""
 
     def __init__(self, *, base_url: str, api_key: str, model: str,
                  embedding_url: str = "", embedding_model: str = "",
-                 embedding_dim: int = 1024):
+                 embedding_dim: int = 1024, embedding_provider: str = "openai"):
         from openai import OpenAI
         self.model = model
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
+        self.embedding_provider = embedding_provider
+        self._embedding_url = embedding_url
         self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=180.0, max_retries=1)
-        emb_url = embedding_url or base_url
-        self._emb_client = OpenAI(api_key=api_key, base_url=emb_url, timeout=180.0, max_retries=0)
+        if embedding_provider == "openai":
+            emb_url = embedding_url or base_url
+            self._emb_client: Any = OpenAI(api_key=api_key, base_url=emb_url, timeout=180.0, max_retries=0)
+        else:
+            self._emb_client = None  # Ollama 不使用 OpenAI client
 
     # -- embedding --
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        if not texts or not self.embedding_model: return []
+        if not texts or not self.embedding_model:
+            return []
+        if self.embedding_provider == "ollama":
+            return self._embed_ollama(texts)
+        return self._embed_openai(texts)
+
+    def _embed_openai(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         batch_size = 64
         for i in range(0, len(texts), batch_size):
@@ -616,6 +629,32 @@ class LLMClient:
                 except Exception:
                     if attempt == 2:
                         print(f"  [警告] embedding 第{i // batch_size + 1}批失败，已重试3次")
+                        embeddings.extend([[] for _ in batch])
+                    else:
+                        time.sleep(min(2.0 * (attempt + 1), 5.0))
+        return embeddings
+
+    def _embed_ollama(self, texts: list[str]) -> list[list[float]]:
+        """调用 Ollama 原生 /api/embed 接口，支持批量。"""
+        import json as _json
+        import urllib.request
+
+        url = (self._embedding_url or "http://localhost:11434").rstrip("/") + "/api/embed"
+        embeddings: list[list[float]] = []
+        batch_size = 64
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            for attempt in range(3):
+                try:
+                    body = _json.dumps({"model": self.embedding_model, "input": batch}).encode("utf-8")
+                    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        data = _json.loads(resp.read().decode("utf-8"))
+                        embeddings.extend(data.get("embeddings", [[] for _ in batch]))
+                    break
+                except Exception:
+                    if attempt == 2:
+                        print(f"  [警告] Ollama embedding 第{i // batch_size + 1}批失败，已重试3次")
                         embeddings.extend([[] for _ in batch])
                     else:
                         time.sleep(min(2.0 * (attempt + 1), 5.0))
@@ -1165,7 +1204,7 @@ def main():
     llm = LLMClient(
         base_url=cfg.llm_base_url, api_key=cfg.llm_api_key, model=cfg.llm_model,
         embedding_url=embedding_url, embedding_model=cfg.embedding_model,
-        embedding_dim=cfg.embedding_dim,
+        embedding_dim=cfg.embedding_dim, embedding_provider=cfg.embedding_provider,
     )
     es = ESStore(workspace_id=workspace_id, es_url=cfg.es_url,
                  es_cloud_id=cfg.es_cloud_id,
