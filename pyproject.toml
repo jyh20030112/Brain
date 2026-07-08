@@ -1,0 +1,17 @@
+[project]
+name = "brain"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.0.0",
+    "elasticsearch[async]>=8.0.0",
+    "pypdf>=4.0.0",
+    "python-docx>=1.0.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.0.0",
+    "pypdfium2>=4.0.0",
+    "mineru-vl-utils",
+    "asyncio>=4.0.0",
+]
