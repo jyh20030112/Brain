@@ -395,16 +395,16 @@ def _dedupe_lines(text: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    t = text.replace("\x00", "")  # 先去掉 null bytes
-    t = t.replace("\r\n", "\n").replace("\r", "\n")
-    t = t.replace("　", " ").replace("\xa0", " ")
-    t = _CONTROL_CHARS.sub("", t)
-    t = _PAGE_MARKERS.sub("\n", t)
-    t = "\n".join(_normalize_line(l) for l in t.splitlines())
-    t = _dedupe_lines(t)
-    t = _MULTI_SPACES.sub(" ", t)
-    t = _MULTI_NEWLINES.sub("\n\n", t)
-    return t.strip()
+    t = text.replace("\x00", "")  # 先去掉 null bytes，避免后续处理出错
+    t = t.replace("\r\n", "\n").replace("\r", "\n")  # 统一换行符为 \n（兼容 Windows/Mac）
+    t = t.replace("　", " ").replace("\xa0", " ")  # 全角空格、不间断空格转为普通空格
+    t = _CONTROL_CHARS.sub("", t)  # 移除不可见控制字符
+    t = _PAGE_MARKERS.sub("\n", t)  # 将分页标记替换为换行
+    t = "\n".join(_normalize_line(l) for l in t.splitlines())  # 逐行规整（去首尾空白等）
+    t = _dedupe_lines(t)  # 去除连续重复的行
+    t = _MULTI_SPACES.sub(" ", t)  # 多个连续空格合并为一个
+    t = _MULTI_NEWLINES.sub("\n\n", t)  # 多个连续换行合并为最多两个（保留段落间隔）
+    return t.strip()  # 去掉整体首尾空白
 
 
 def clean_docs(documents: list[DocumentRecord]) -> list[DocumentRecord]:
@@ -423,35 +423,40 @@ def clean_docs(documents: list[DocumentRecord]) -> list[DocumentRecord]:
 # 5. 文档切块
 # ============================================================
 
+# 标题特征：中文/阿拉伯数字开头（如「一、」「1.」），或「第N步/章/节/项」
 _HEADING_PATTERN = re.compile(r"^[一二三四五六七八九十\d]+[、.)）]?\s*|^第\s*\d+\s*[步章节项]")
+# 句子边界：零宽后向断言，在句末标点之后切分（标点保留在句尾）
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？!?；;])")
 
 
 def _looks_like_heading(text: str) -> bool:
-    if len(text) > 42: return False
-    if _HEADING_PATTERN.search(text): return True
-    return text.endswith(("：", ":")) and len(text) <= 30
+    """判断一行是否像章节标题（用于标记后续内容归属，不作为正文入块）"""
+    if len(text) > 42: return False  # 过长的一定不是标题
+    if _HEADING_PATTERN.search(text): return True  # 命中编号/章节模式
+    return text.endswith(("：", ":")) and len(text) <= 30  # 或以冒号结尾的短句
 
 
 def _split_large(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
+    """将超长段落按句子边界拆成多个块，块间保留 chunk_overlap 字符的重叠"""
     sentences = [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
-    if not sentences: return [text[:chunk_size]]
+    if not sentences: return [text[:chunk_size]]  # 无标点可切时，硬截断兜底
     pieces, buf = [], ""
     for s in sentences:
-        if not buf: buf = s; continue
+        if not buf: buf = s; continue  # 缓冲为空则以当前句起头
         cand = f"{buf}{s}"
-        if len(cand) <= chunk_size: buf = cand; continue
-        pieces.append(buf)
-        overlap = buf[-chunk_overlap:] if chunk_overlap > 0 else ""
-        buf = f"{overlap}{s}"
-    if buf: pieces.append(buf)
+        if len(cand) <= chunk_size: buf = cand; continue  # 还装得下就继续累加
+        pieces.append(buf)  # 超限，落盘当前缓冲
+        overlap = buf[-chunk_overlap:] if chunk_overlap > 0 else ""  # 取尾部作重叠
+        buf = f"{overlap}{s}"  # 新块以「重叠+当前句」起头，保证语义连续
+    if buf: pieces.append(buf)  # 补最后一块
     return [p.strip() for p in pieces if p.strip()]
 
 
 def _build_chunk(doc: DocumentRecord, workspace_id: str, page_number: int | None,
                  section: str, content: str) -> TextChunk:
-    ct = "table" if "columns:" in content or "row " in content else "paragraph"
-    seed = f"{doc.source_path}:{page_number}:{section}:{content}"
+    """构造 TextChunk 对象：推断类型、生成幂等 id、附带章节与标题元数据"""
+    ct = "table" if "columns:" in content or "row " in content else "paragraph"  # 粗判表格/段落
+    seed = f"{doc.source_path}:{page_number}:{section}:{content}"  # id 种子，保证同内容幂等
     return TextChunk(
         id=f"chunk_{_short_hash(seed)}", workspace_id=workspace_id,
         file_name=doc.file_name, source_path=doc.source_path, content=content.strip(),
@@ -462,16 +467,20 @@ def _build_chunk(doc: DocumentRecord, workspace_id: str, page_number: int | None
 
 def chunk_docs(documents: list[DocumentRecord], *, workspace_id: str,
                chunk_size: int, chunk_overlap: int) -> list[TextChunk]:
+    """文档切块主流程：段落优先聚合 + 超长段句级拆分 + 带重叠滑窗 + 去重"""
     chunks: list[TextChunk] = []
-    for doc in documents:
-        section = doc.title or doc.file_name
+    for doc in documents:  # 遍历：文档 → 页 → 段落
+        section = doc.title or doc.file_name  # 当前章节，默认用文档标题
         for page in doc.pages:
+            # 用连续空行切段（与 clean_text 把多空行压成 \n\n 的处理配套）
             paragraphs = [p.strip() for p in re.split(r"\n{2,}", page.text) if p.strip()]
-            buf = ""
+            buf = ""  # 正在拼装的当前块
             for para in paragraphs:
-                p = re.sub(r"\s+", " ", para).strip()
+                p = re.sub(r"\s+", " ", para).strip()  # 段内空白压平成单空格
                 if not p: continue
+                # ① 标题行：只更新 section，不入块
                 if _looks_like_heading(p): section = p[:120]; continue
+                # ② 超长段落：先冲刷已有 buf，再按句拆分逐块落盘
                 if len(p) > chunk_size:
                     if buf:
                         chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
@@ -479,15 +488,18 @@ def chunk_docs(documents: list[DocumentRecord], *, workspace_id: str,
                     for piece in _split_large(p, chunk_size, chunk_overlap):
                         chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, piece))
                     continue
+                # ③ 缓冲为空：以当前段起头
                 if not buf: buf = p; continue
+                # ④ 尝试合并；超限则落盘并带重叠开新块
                 cand = f"{buf}\n{p}"
-                if len(cand) <= chunk_size: buf = cand
+                if len(cand) <= chunk_size: buf = cand  # 还装得下，继续累积
                 else:
                     chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
+                    # 新块接上旧块尾部 chunk_overlap 字符，实现滑动窗口重叠
                     buf = (f"{buf[-chunk_overlap:].strip()}\n{p}" if chunk_overlap > 0 else p)
-            if buf:
+            if buf:  # 段落循环结束，补尾块
                 chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
-    # 去重
+    # 去重：按正文内容 + chunk id 双重去重，保序输出
     seen_content, seen_ids, deduped = set(), set(), []
     for c in chunks:
         sig = c.content.strip()
