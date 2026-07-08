@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 mvp_output/
+.env
+uv.lock
+.claude
+docs

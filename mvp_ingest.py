@@ -3,11 +3,7 @@
 MVP 入库脚本 — 自包含的知识库入库流水线
 ================================================================================
 
-零项目 import，所有逻辑内联。修改下方的 Config 配置，然后直接运行：
-
-    python mvp_ingest.py
-
-或者：
+零项目 import，所有逻辑内联。复制 .env.example 为 .env 并填入配置，然后直接运行：
 
     uv run python mvp_ingest.py
 
@@ -26,9 +22,9 @@ MVP 入库脚本 — 自包含的知识库入库流水线
     支持: .pdf  .docx  .txt  .md  .csv  .xlsx
 
     PDF 解析策略:
-      1. 若配置了 mineru_server，优先使用远程 MinerU OCR
+      1. 若配置了 mineru_api_token，优先使用 MinerU 云 API（mineru.net）
       2. MinerU 不可用或失败时，自动回退 pypdf
-      3. 若 mineru_server 为空，直接使用 pypdf
+      3. 若 mineru_api_token 为空，直接使用 pypdf
 
 ----------------------
 输出产物
@@ -48,7 +44,7 @@ MVP 入库脚本 — 自包含的知识库入库流水线
 ----------------------
 
     openai  elasticsearch[async]  pypdf  python-docx
-    pandas  openpyxl  pypdfium2  mineru-vl-utils
+    pandas  openpyxl  python-dotenv  mineru-open-sdk
 
     使用前确保 uv sync 已完成。
 """
@@ -70,43 +66,67 @@ from typing import Any
 
 
 # ============================================================
-# 配置 — 在这里修改参数，然后直接运行 python mvp_ingest.py
+# 配置 — 所有配置从 .env 文件或环境变量读取，零硬编码密钥
 # ============================================================
 
 @dataclass
 class Config:
     # ---- 输入输出 ----
-    input_dir: str = "./docs/"            # 文档目录，递归扫描子目录
-    project: str = "省心说客服"            # 项目名称，决定 ES 索引命名空间
-    output_dir: str = "mvp_output"        # 产物输出目录
+    input_dir: str = "./docs/"
+    project: str = "省心说客服"
+    output_dir: str = "mvp_output"
 
     # ---- LLM ----
-    llm_base_url: str = "http://183.147.142.111:30000/v1"
-    llm_api_key: str = "EMPTY"
-    llm_model: str = "glm-4.7"
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
 
     # ---- Embedding ----
     embedding_url: str = ""               # 留空则使用 llm_base_url
-    embedding_model: str = "bge-m3"
+    embedding_model: str = ""
     embedding_dim: int = 1024
 
-    # ---- Elasticsearch ----
-    # 方式1: Elastic Cloud — 填写 cloud_id + api_key（或 username/password）
-    es_cloud_id: str = ""                       # Elastic Cloud 的 Cloud ID
-    es_api_key: str = ""                        # API Key（优先于密码）
-    # 方式2: 自建 / 其他云 — 填写完整 URL + 账号密码
-    es_url: str = ""                            # 如 "https://xxx.es.aliyuncs.com:9200"
-    es_username: str = "elastic"
+    # ---- Elasticsearch (Cloud ID / URL + 认证) ----
+    es_cloud_id: str = ""
+    es_url: str = ""
+    es_username: str = ""
     es_password: str = ""
+    es_api_key: str = ""                  # API Key（优先于密码）
 
     # ---- MinerU (PDF OCR，可选) ----
-    mineru_server: str = ""               # 如 "http://x.x.x.x:63359"，留空则用 pypdf
+    mineru_api_token: str = ""            # 留空则用 pypdf
 
     # ---- QA 生成参数 ----
-    qa_limit: int = 12                    # 生成的核心问题数
-    qa_generalization: int = 2            # 每个问题的变体数量
-    chunk_size: int = 512                 # 文本切块大小
-    chunk_overlap: int = 120              # 切块重叠字数
+    qa_limit: int = 12
+    qa_generalization: int = 2
+    chunk_size: int = 512
+    chunk_overlap: int = 120
+
+    @classmethod
+    def from_env(cls) -> Config:
+        """从环境变量加载配置（.env 文件需提前 load_dotenv）。"""
+        import os
+        return cls(
+            input_dir=os.getenv("INPUT_DIR", "./docs/"),
+            project=os.getenv("PROJECT", "省心说客服"),
+            output_dir=os.getenv("OUTPUT_DIR", "mvp_output"),
+            llm_base_url=os.getenv("LLM_BASE_URL", ""),
+            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_model=os.getenv("LLM_MODEL", ""),
+            embedding_url=os.getenv("EMBEDDING_URL", ""),
+            embedding_model=os.getenv("EMBEDDING_MODEL", "bge-m3"),
+            embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
+            es_cloud_id=os.getenv("ES_CLOUD_ID", ""),
+            es_url=os.getenv("ES_URL", ""),
+            es_username=os.getenv("ES_USERNAME", ""),
+            es_password=os.getenv("ES_PASSWORD", ""),
+            es_api_key=os.getenv("ES_API_KEY", ""),
+            mineru_api_token=os.getenv("MINERU_API_TOKEN", ""),
+            qa_limit=int(os.getenv("QA_LIMIT", "12")),
+            qa_generalization=int(os.getenv("QA_GENERALIZATION", "2")),
+            chunk_size=int(os.getenv("CHUNK_SIZE", "512")),
+            chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "120")),
+        )
 
 # ============================================================
 # 1. 数据模型
@@ -214,74 +234,41 @@ def _load_pdf_pypdf(file_path: Path) -> list[DocumentPage]:
             for i, p in enumerate(reader.pages, start=1)]
 
 
-def _mineru_available(server_url: str) -> tuple[bool, str]:
-    """检查 MinerU 运行时是否可用。"""
-    if not server_url:
-        return False, "未配置 --mineru-server"
+def _mineru_available(api_token: str) -> tuple[bool, str]:
+    """检查 MinerU 云 API 是否可用。"""
+    if not api_token:
+        return False, "未配置 mineru_api_token"
     try:
         import importlib.util
-        if importlib.util.find_spec("mineru_vl_utils") is None:
-            return False, "缺少 mineru_vl_utils 包"
-        if importlib.util.find_spec("pypdfium2") is None:
-            return False, "缺少 pypdfium2 包"
+        if importlib.util.find_spec("mineru") is None:
+            return False, "缺少 mineru-open-sdk 包，请执行: uv add mineru-open-sdk"
     except Exception:
         return False, "依赖检查失败"
     return True, ""
 
 
-def _load_pdf_mineru(file_path: Path, server_url: str, output_dir: Path) -> list[DocumentPage]:
-    """用远程 MinerU 服务解析 PDF。失败抛异常，由上游回退到 pypdf。"""
-    import pypdfium2 as pdfium
-    from mineru_vl_utils import MinerUClient
+def _load_pdf_mineru(file_path: Path, api_token: str, output_dir: Path) -> list[DocumentPage]:
+    """用 MinerU 云 API 解析 PDF。失败抛异常，由上游回退到 pypdf。"""
+    from mineru import MinerU
 
-    # 1. 渲染 PDF 为图片
-    doc = pdfium.PdfDocument(str(file_path))
-    images = []
+    client = MinerU(token=api_token)
     try:
-        for i in range(len(doc)):
-            page = doc.get_page(i)
-            try:
-                bitmap = page.render(scale=2.0)
-                images.append(bitmap.to_pil().convert("RGB"))
-            finally:
-                page.close()
-    finally:
-        doc.close()
+        result = client.extract(str(file_path), model="vlm")
+    except Exception:
+        client.close()
+        raise
+    client.close()
 
-    if not images:
-        raise RuntimeError("PDF 渲染为空")
+    if result.state != "done" or not result.markdown:
+        raise RuntimeError(f"MinerU 云解析失败: {result.error or '无内容返回'}")
 
-    # 2. 逐页调用远程 MinerU
-    client = MinerUClient(backend="http-client", server_url=server_url)
-    start = time.monotonic()
-    page_texts = []
-    for idx, img in enumerate(images, start=1):
-        if time.monotonic() - start > 300:
-            raise RuntimeError(f"MinerU 超时 (>300s)")
-        blocks = client.two_step_extract(img)
-        text = "\n".join(str(b.get("content", "")).strip() for b in blocks if b.get("content"))
-        page_texts.append(f"-- {idx} of {len(images)} --\n{text}")
+    markdown = result.markdown.strip()
 
-    raw = "\n\n".join(page_texts)
+    # 持久化到本地便于排查
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "mineru_result.md").write_text(markdown, encoding="utf-8")
 
-    # 3. 按页标记拆页
-    marker = re.compile(r"--\s*(\d+)\s+of\s+\d+\s*--")
-    matches = list(marker.finditer(raw))
-    if matches:
-        pages = []
-        for i, m in enumerate(matches):
-            start_pos = m.end()
-            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
-            body = raw[start_pos:end_pos].strip()
-            if body:
-                pages.append(DocumentPage(page_number=int(m.group(1)), text=body))
-        if pages:
-            # 持久化到本地便于排查
-            output_dir.mkdir(parents=True, exist_ok=True)
-            (output_dir / "mineru_result.txt").write_text(raw, encoding="utf-8")
-            return pages
-
-    return [DocumentPage(page_number=1, text=raw)]
+    return [DocumentPage(page_number=1, text=markdown)]
 
 
 def _load_docx(file_path: Path) -> list[DocumentPage]:
@@ -332,11 +319,11 @@ def _guess_title(pages: list[DocumentPage], fallback: str) -> str:
     return fallback
 
 
-def load_docs(file_paths: list[Path], *, mineru_server: str = "",
+def load_docs(file_paths: list[Path], *, mineru_api_token: str = "",
               output_dir: Path | None = None) -> list[DocumentRecord]:
     documents: list[DocumentRecord] = []
-    mineru_ok, mineru_msg = _mineru_available(mineru_server)
-    if mineru_server and not mineru_ok:
+    mineru_ok, mineru_msg = _mineru_available(mineru_api_token)
+    if mineru_api_token and not mineru_ok:
         print(f"  [警告] MinerU 不可用: {mineru_msg}，PDF 将使用 pypdf")
 
     for fp in file_paths:
@@ -345,7 +332,7 @@ def load_docs(file_paths: list[Path], *, mineru_server: str = "",
             if mineru_ok:
                 try:
                     out = (output_dir or Path(".")) / f"mineru_{_short_hash(fp.name)}"
-                    pages = _load_pdf_mineru(fp, mineru_server, out)
+                    pages = _load_pdf_mineru(fp, mineru_api_token, out)
                     print(f"  [MinerU] {fp.name}: {len(pages)} 页")
                 except Exception as e:
                     print(f"  [MinerU] {fp.name} 失败，回退 pypdf: {e}")
@@ -1143,7 +1130,9 @@ def qa_pairs_to_rows(qa_pairs: list[QAPair]) -> list[dict[str, str]]:
 # ============================================================
 
 def main():
-    cfg = Config()
+    from dotenv import load_dotenv
+    load_dotenv()
+    cfg = Config.from_env()
 
     input_dir = Path(cfg.input_dir).resolve()
     if not input_dir.is_dir():
@@ -1186,9 +1175,9 @@ def main():
 
     # ═══════════ 功能1: 加载 + 清洗 ═══════════
     print("\n── 功能1: 文档加载 + 清洗 ──")
-    print(f"  MinerU: {'禁用' if not cfg.mineru_server else cfg.mineru_server}")
+    print(f"  MinerU: {'禁用' if not cfg.mineru_api_token else '已配置（云 API）'}")
     print("  加载文档...")
-    docs = load_docs(file_paths, mineru_server=cfg.mineru_server, output_dir=output_dir)
+    docs = load_docs(file_paths, mineru_api_token=cfg.mineru_api_token, output_dir=output_dir)
     if not docs:
         print("错误: 没有可处理的文档"); raise SystemExit(1)
     print(f"  已加载 {len(docs)} 个文档")
