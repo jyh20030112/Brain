@@ -91,9 +91,13 @@ class Config:
     embedding_dim: int = 1024
 
     # ---- Elasticsearch ----
-    es_url: str = "http://183.147.142.111:1200"
+    # 方式1: Elastic Cloud — 填写 cloud_id + api_key（或 username/password）
+    es_cloud_id: str = ""                       # Elastic Cloud 的 Cloud ID
+    es_api_key: str = ""                        # API Key（优先于密码）
+    # 方式2: 自建 / 其他云 — 填写完整 URL + 账号密码
+    es_url: str = ""                            # 如 "https://xxx.es.aliyuncs.com:9200"
     es_username: str = "elastic"
-    es_password: str = "infini_rag_flow"
+    es_password: str = ""
 
     # ---- MinerU (PDF OCR，可选) ----
     mineru_server: str = ""               # 如 "http://x.x.x.x:63359"，留空则用 pypdf
@@ -787,10 +791,19 @@ DEFAULT_RRF_K = 60
 
 
 @asynccontextmanager
-async def _es_ctx(url: str, username: str = "", password: str = ""):
+async def _es_ctx(*, url: str = "", cloud_id: str = "", api_key: str = "",
+                   username: str = "", password: str = ""):
     from elasticsearch import AsyncElasticsearch
-    kwargs: dict = {"hosts": [url.strip().rstrip("/")], "verify_certs": False, "request_timeout": 30}
-    if username and password:
+    kwargs: dict = {"verify_certs": True, "request_timeout": 30}
+    if cloud_id:
+        kwargs["cloud_id"] = cloud_id.strip()
+    elif url:
+        kwargs["hosts"] = [url.strip().rstrip("/")]
+    else:
+        raise ValueError("必须提供 es_cloud_id 或 es_url")
+    if api_key:
+        kwargs["api_key"] = api_key.strip()
+    elif username and password:
         kwargs["basic_auth"] = (username.strip(), password.strip())
     client = AsyncElasticsearch(**kwargs)
     try: yield client
@@ -817,12 +830,16 @@ def _run_async(coro):
 class ESStore:
     """Elasticsearch 索引 + 检索。"""
 
-    def __init__(self, workspace_id: str, es_url: str, es_user: str = "",
-                 es_pass: str = "", embedding_dim: int = 1024):
+    def __init__(self, workspace_id: str, *,
+                 es_url: str = "", es_cloud_id: str = "",
+                 es_user: str = "", es_pass: str = "", es_api_key: str = "",
+                 embedding_dim: int = 1024):
         self.wid = workspace_id
         self.es_url = es_url
+        self.es_cloud_id = es_cloud_id
         self.es_user = es_user
         self.es_pass = es_pass
+        self.es_api_key = es_api_key
         self.emb_dim = embedding_dim
 
     # -- index documents --
@@ -843,7 +860,9 @@ class ESStore:
 
     def index_docs(self, chunks: list[TextChunk], embeddings: list[list[float]]):
         async def _run():
-            async with _es_ctx(self.es_url, self.es_user, self.es_pass) as es:
+            async with _es_ctx(url=self.es_url, cloud_id=self.es_cloud_id,
+                               api_key=self.es_api_key,
+                               username=self.es_user, password=self.es_pass) as es:
                 idx = _docs_index(self.wid)
                 # 删旧建新
                 await es.options(ignore_status=404).indices.delete(index=idx)
@@ -872,7 +891,9 @@ class ESStore:
                     rrf_k: int = DEFAULT_RRF_K) -> list[RetrievedChunk]:
         """两路独立召回 + RRF 融合，与原始 QASearchService 逻辑一致。"""
         async def _run():
-            async with _es_ctx(self.es_url, self.es_user, self.es_pass) as es:
+            async with _es_ctx(url=self.es_url, cloud_id=self.es_cloud_id,
+                               api_key=self.es_api_key,
+                               username=self.es_user, password=self.es_pass) as es:
                 idx = _docs_index(self.wid)
                 if not await es.indices.exists(index=idx):
                     return []
@@ -982,7 +1003,9 @@ class ESStore:
 
     def index_qa(self, qa_pairs: list[QAPair], embeddings: list[list[float]]):
         async def _run():
-            async with _es_ctx(self.es_url, self.es_user, self.es_pass) as es:
+            async with _es_ctx(url=self.es_url, cloud_id=self.es_cloud_id,
+                               api_key=self.es_api_key,
+                               username=self.es_user, password=self.es_pass) as es:
                 idx = _qa_index(self.wid)
                 await es.options(ignore_status=404).indices.delete(index=idx)
                 await es.indices.create(index=idx, mappings=self._qa_mapping())
@@ -1156,7 +1179,9 @@ def main():
         embedding_dim=cfg.embedding_dim,
     )
     es = ESStore(workspace_id=workspace_id, es_url=cfg.es_url,
+                 es_cloud_id=cfg.es_cloud_id,
                  es_user=cfg.es_username, es_pass=cfg.es_password,
+                 es_api_key=cfg.es_api_key,
                  embedding_dim=cfg.embedding_dim)
 
     # ═══════════ 功能1: 加载 + 清洗 ═══════════
