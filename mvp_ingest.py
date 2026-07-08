@@ -820,7 +820,7 @@ DEFAULT_RRF_K = 60
 async def _es_ctx(*, url: str = "", cloud_id: str = "", api_key: str = "",
                    username: str = "", password: str = ""):
     from elasticsearch import AsyncElasticsearch
-    kwargs: dict = {"verify_certs": True, "request_timeout": 30}
+    kwargs: dict = {"verify_certs": True, "request_timeout": 120, "max_retries": 3, "retry_on_timeout": True}
     if cloud_id:
         kwargs["cloud_id"] = cloud_id.strip()
     elif url:
@@ -894,13 +894,13 @@ class ESStore:
                 await es.options(ignore_status=404).indices.delete(index=idx)
                 await es.indices.create(index=idx, mappings=self._docs_mapping())
                 # 批量写入
-                for i in range(0, len(chunks), 100):
-                    batch_c = chunks[i:i + 100]
-                    batch_e = embeddings[i:i + 100]
+                for i in range(0, len(chunks), 50):
+                    batch_c = chunks[i:i + 50]
+                    batch_e = embeddings[i:i + 50]
                     ops = []
                     for c, e in zip(batch_c, batch_e):
                         ops.append({"index": {"_index": idx, "_id": c.id}})
-                        doc = {"id": c.id, "workspace_id": c.wid, "file_name": c.file_name,  # ty:ignore[unresolved-attribute]
+                        doc = {"id": c.id, "workspace_id": c.workspace_id, "file_name": c.file_name,
                                "source_path": c.source_path, "content": c.content,
                                "page_number": c.page_number, "section": c.section,
                                "chunk_type": c.chunk_type, "metadata": c.metadata}
@@ -1196,9 +1196,12 @@ def main():
     print(f"[ID]     {workspace_id}")
 
     # ── 初始化 LLM + ES ────────────────────────────────
-    embedding_url = cfg.embedding_url or cfg.llm_base_url
+    if cfg.embedding_provider == "ollama":
+        embedding_url = cfg.embedding_url or "http://localhost:11434"
+    else:
+        embedding_url = cfg.embedding_url or cfg.llm_base_url
     print(f"[LLM]    {cfg.llm_model} @ {cfg.llm_base_url}")
-    print(f"[Embed]  {cfg.embedding_model} @ {embedding_url}")
+    print(f"[Embed]  {cfg.embedding_model} ({cfg.embedding_provider}) @ {embedding_url}")
     print(f"[ES]     {cfg.es_url}")
 
     llm = LLMClient(
