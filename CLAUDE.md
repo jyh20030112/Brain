@@ -10,25 +10,24 @@ Brain is a knowledge base ingestion pipeline for customer service (客服) conte
 
 - **Install dependencies**: `uv sync`
 - **Run the MVP ingestion pipeline**: `uv run python main.py`
+- **Run tests**: `uv run pytest`
 
-All dependencies are in `pyproject.toml`; not yet declared there explicitly but required at runtime: `openai`, `elasticsearch[async]`, `pypdf`, `python-docx`, `pandas`, `openpyxl`, `pypdfium2`, `mineru-vl-utils`.
+Runtime and dev dependencies are declared in `pyproject.toml`; `uv.lock` should be kept in sync.
 
 ## Architecture
 
-### `main.py` — the core pipeline
+### Package layout
 
-A self-contained ingestion script (~1300 lines, zero project imports). The execution flow is:
+`main.py` is a compatibility entrypoint only. The implementation lives in the `src` package:
 
-1. **Document loading** (`load_docs`) — Supports PDF (MinerU OCR with pypdf fallback), DOCX, TXT/MD, CSV, XLSX. Wraps everything into `DocumentRecord` (list of `DocumentPage`).
-2. **Text cleaning** (`clean_text`) — CJK-aware: normalizes whitespace, removes control chars, deduplicates consecutive identical lines, handles fullwidth spaces and non-breaking spaces.
-3. **Semantic chunking** (`chunk_docs`) — Splits by paragraph, then by sentence boundaries for oversized paragraphs. Builds `TextChunk` objects with deduplication.
-4. **LLM product description** (`LLMClient.generate_product_description`) — Feeds all document text to the LLM to produce a structured product intro in Markdown.
-5. **Customer question generation** (`LLMClient.generate_customer_questions`) — LLM generates questions + semantic variants a real customer would ask.
-6. **Hybrid retrieval** (`ESStore.search_docs`) — Two-path recall (vector kNN + BM25 keyword) fused via RRF (Reciprocal Rank Fusion).
-7. **Batch QA generation** (`generate_qa_pairs`) — For each question, retrieves top-K chunks, then LLM generates an answer from evidence only. ThreadPoolExecutor-parallelized.
-8. **Deduplication** (`dedupe_qa`) — Normalized question text dedup, merges evidence, keeps longest answer.
-9. **ES indexing** — Two indices: `docs_{workspace_id}` (document chunks with embeddings) and `qa_{workspace_id}` (QA pairs with embeddings).
-10. **Output** — `qa_list.json`, `qa_list.md`, `qa_list.csv`, `product_description.md`.
+- `src.config` — environment-backed `Config`
+- `src.models` — shared dataclasses (`DocumentRecord`, `TextChunk`, `QAPair`, etc.)
+- `src.documents` — document loading, text cleaning, and semantic chunking
+- `src.llm` — OpenAI-compatible/Ollama client and prompt templates
+- `src.storage` — Elasticsearch indexing and hybrid retrieval
+- `src.qa` — batch QA generation and question deduplication
+- `src.output` — Markdown/CSV row formatting
+- `src.pipeline` — end-to-end ingestion orchestration
 
 ### Key design decisions
 
@@ -40,14 +39,14 @@ A self-contained ingestion script (~1300 lines, zero project imports). The execu
 
 ### Configuration
 
-All config lives in the `Config` dataclass in `main.py` (lines 76-105). Key parameters:
+All config lives in the `Config` dataclass in `src/config.py`. Key parameters:
 - `input_dir` — document source directory (recursive scan)
 - `project` — project name, used for ES index naming
 - `llm_base_url` / `llm_model` — OpenAI-compatible LLM endpoint
 - `es_url` — Elasticsearch endpoint
-- `mineru_server` — optional remote MinerU OCR server for PDF
+- `mineru_api_token` — optional MinerU cloud OCR token for PDF
 - `qa_limit` / `qa_generalization` / `chunk_size` / `chunk_overlap`
 
-### No tests yet
+### Tests
 
-There are no test files or test framework configured. The project is in early MVP stage.
+The `tests/` suite covers offline logic only: cleaning, chunking, QA deduplication, and output formatting. It does not call OpenAI, Ollama, MinerU, or Elasticsearch.
