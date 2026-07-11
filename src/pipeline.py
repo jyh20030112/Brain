@@ -75,7 +75,7 @@ def run_pipeline(cfg: Config) -> None:
         raise SystemExit(1)
 
     print("\n── 原始资料写入 ES ──")
-    chunk_texts = [c.content for c in chunks]
+    chunk_texts = [c.embedding_text for c in chunks]
     print(f"  生成 embedding ({len(chunks)} 条)...")
     chunk_embs = embeddings.embed(chunk_texts)
     active_index = es.index_docs(chunks, chunk_embs)

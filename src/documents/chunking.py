@@ -7,7 +7,8 @@ from src.utils import _short_hash
 
 
 _HEADING_PATTERN = re.compile(r"^[一二三四五六七八九十\d]+[、.)）]?\s*|^第\s*\d+\s*[步章节项]")
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？!?；;])")
+_TOKEN_PATTERN = re.compile(r"[\u3400-\u9fff]|[A-Za-z0-9_]+|[^\s]")
+_SPLIT_BOUNDARY = re.compile(r"[\s。！？!?；;，,、：:]")
 
 
 def _looks_like_heading(text: str) -> bool:
@@ -19,26 +20,63 @@ def _looks_like_heading(text: str) -> bool:
     return text.endswith(("：", ":")) and len(text) <= 30
 
 
+def _estimate_token_count(text: str) -> int:
+    """轻量估算 token 数：CJK/标点按 1，ASCII 连续词约每 4 字符 1 token。"""
+    count = 0
+    for match in _TOKEN_PATTERN.finditer(text):
+        token = match.group(0)
+        count += max(1, (len(token) + 3) // 4) if token.isascii() and token.replace("_", "").isalnum() else 1
+    return count
+
+
+def _max_prefix_index(text: str, budget: int) -> int:
+    """返回不超过 token 预算的最大字符前缀位置。"""
+    low, high = 1, len(text)
+    best = 0
+    while low <= high:
+        middle = (low + high) // 2
+        if _estimate_token_count(text[:middle]) <= budget:
+            best = middle
+            low = middle + 1
+        else:
+            high = middle - 1
+    return max(1, best)
+
+
+def _tail_with_budget(text: str, budget: int) -> str:
+    if budget <= 0 or not text:
+        return ""
+    low, high = 0, len(text)
+    best = len(text)
+    while low <= high:
+        middle = (low + high) // 2
+        if _estimate_token_count(text[middle:]) <= budget:
+            best = middle
+            high = middle - 1
+        else:
+            low = middle + 1
+    return text[best:].strip()
+
+
 def _split_large(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
-    """将超长段落按句子边界拆成多个块，块间保留 chunk_overlap 字符的重叠"""
-    sentences = [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
-    if not sentences:
-        return [text[:chunk_size]]
-    pieces, buf = [], ""
-    for s in sentences:
-        if not buf:
-            buf = s
-            continue
-        cand = f"{buf}{s}"
-        if len(cand) <= chunk_size:
-            buf = cand
-            continue
-        pieces.append(buf)
-        overlap = buf[-chunk_overlap:] if chunk_overlap > 0 else ""
-        buf = f"{overlap}{s}"
-    if buf:
-        pieces.append(buf)
-    return [p.strip() for p in pieces if p.strip()]
+    """按估算 token 预算拆分，优先边界切分，并保证每块存在硬上限。"""
+    remaining = text.strip()
+    pieces: list[str] = []
+    while remaining and _estimate_token_count(remaining) > chunk_size:
+        hard_end = _max_prefix_index(remaining, chunk_size)
+        prefix = remaining[:hard_end]
+        boundaries = [match.end() for match in _SPLIT_BOUNDARY.finditer(prefix)]
+        soft_end = boundaries[-1] if boundaries and boundaries[-1] >= hard_end // 2 else hard_end
+        piece = remaining[:soft_end].strip()
+        if not piece:
+            soft_end = hard_end
+            piece = remaining[:soft_end].strip()
+        pieces.append(piece)
+        overlap = _tail_with_budget(piece, chunk_overlap)
+        remaining = f"{overlap}{remaining[soft_end:]}".strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
 
 
 def _build_chunk(
@@ -71,7 +109,12 @@ def chunk_docs(
     chunk_size: int,
     chunk_overlap: int,
 ) -> list[TextChunk]:
-    """文档切块主流程：段落优先聚合 + 超长段句级拆分 + 带重叠滑窗 + 去重"""
+    """文档切块主流程：段落聚合 + token 预算拆分 + 带重叠滑窗 + 文档内去重。"""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size 必须大于 0")
+    if not 0 <= chunk_overlap < chunk_size:
+        raise ValueError("chunk_overlap 必须满足 0 <= overlap < chunk_size")
+
     chunks: list[TextChunk] = []
     for doc in documents:
         section = doc.title or doc.file_name
@@ -83,32 +126,29 @@ def chunk_docs(
                 if not p:
                     continue
                 if _looks_like_heading(p):
-                    section = p[:120]
-                    continue
-                if len(p) > chunk_size:
                     if buf:
                         chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
                         buf = ""
-                    for piece in _split_large(p, chunk_size, chunk_overlap):
-                        chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, piece))
+                    section = p[:120]
                     continue
-                if not buf:
-                    buf = p
-                    continue
-                cand = f"{buf}\n{p}"
-                if len(cand) <= chunk_size:
-                    buf = cand
+                candidate = p if not buf else f"{buf}\n{p}"
+                if _estimate_token_count(candidate) <= chunk_size:
+                    buf = candidate
                 else:
-                    chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
-                    buf = f"{buf[-chunk_overlap:].strip()}\n{p}" if chunk_overlap > 0 else p
+                    if buf:
+                        chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
+                        overlap = _tail_with_budget(buf, chunk_overlap)
+                        candidate = f"{overlap}\n{p}".strip() if overlap else p
+                    pieces = _split_large(candidate, chunk_size, chunk_overlap)
+                    for piece in pieces[:-1]:
+                        chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, piece))
+                    buf = pieces[-1] if pieces else ""
             if buf:
                 chunks.append(_build_chunk(doc, workspace_id, page.page_number, section, buf))
-    seen_content, seen_ids, deduped = set(), set(), []
+    seen_ids, deduped = set(), []
     for c in chunks:
-        sig = c.content.strip()
-        if sig in seen_content or c.id in seen_ids:
+        if c.id in seen_ids:
             continue
-        seen_content.add(sig)
         seen_ids.add(c.id)
         deduped.append(c)
     return deduped

@@ -3,10 +3,13 @@ from src.pipeline import run_pipeline
 
 
 class FakeEmbeddingClient:
+    embedded_texts = []
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        self.__class__.embedded_texts = list(texts)
         return [[0.1, 0.2] for _ in texts]
 
 
@@ -48,5 +51,7 @@ def test_run_pipeline_offline_flow(monkeypatch, tmp_path):
 
     assert FakeES.indexed_chunks
     assert {chunk.file_name for chunk in FakeES.indexed_chunks} == {"product.txt"}
+    assert any("文档标题：产品资料正文" in text for text in FakeEmbeddingClient.embedded_texts)
+    assert any("章节标题：使用方法：" in text for text in FakeEmbeddingClient.embedded_texts)
     assert not (output_dir / "qa_list.json").exists()
     assert not (output_dir / "product_description.md").exists()
