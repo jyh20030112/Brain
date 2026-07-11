@@ -1,5 +1,5 @@
-from src.config import Config
-from src.pipeline import run_pipeline
+from brain.config import Config
+from brain.ingestion import run_ingestion
 
 
 class FakeEmbeddingClient:
@@ -25,14 +25,14 @@ class FakeES:
         return "docs_test_current"
 
 
-def test_run_pipeline_offline_flow(monkeypatch, tmp_path):
+def test_run_ingestion_offline_flow(monkeypatch, tmp_path):
     input_dir = tmp_path / "docs"
     input_dir.mkdir()
     (input_dir / "product.txt").write_text("产品资料正文\n\n使用方法：\n\n早晚使用。", encoding="utf-8")
 
     output_dir = tmp_path / "out"
-    monkeypatch.setattr("src.pipeline.EmbeddingClient", FakeEmbeddingClient)
-    monkeypatch.setattr("src.pipeline.ESStore", FakeES)
+    monkeypatch.setattr("brain.ingestion.build_embedding_client", lambda cfg: FakeEmbeddingClient())
+    monkeypatch.setattr("brain.ingestion.build_es_store", lambda cfg: FakeES())
 
     cfg = Config(
         input_dir=str(input_dir),
@@ -47,7 +47,7 @@ def test_run_pipeline_offline_flow(monkeypatch, tmp_path):
         chunk_overlap=10,
     )
 
-    run_pipeline(cfg)
+    run_ingestion(cfg)
 
     assert FakeES.indexed_chunks
     assert {chunk.file_name for chunk in FakeES.indexed_chunks} == {"product.txt"}

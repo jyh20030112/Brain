@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 
@@ -31,8 +32,18 @@ class Config:
     chunk_size: int = 512
     chunk_overlap: int = 120
 
-    def validate_for_ingestion(self) -> None:
+    @property
+    def workspace_id(self) -> str:
+        return hashlib.md5(self.project.encode()).hexdigest()[:16]
+
+    @property
+    def embedding_base_url(self) -> str:
+        return self.embedding_url or "http://localhost:11434"
+
+    def _common_errors(self) -> list[str]:
         errors: list[str] = []
+        if not self.project.strip():
+            errors.append("PROJECT 不能为空")
         if self.embedding_provider not in {"openai", "ollama"}:
             errors.append("EMBEDDING_PROVIDER 仅支持 openai 或 ollama")
         if not self.embedding_model:
@@ -41,12 +52,21 @@ class Config:
             errors.append("使用 OpenAI 兼容 embedding 时必须配置 EMBEDDING_URL")
         if self.embedding_dim <= 0:
             errors.append("EMBEDDING_DIM 必须大于 0")
+        if not (self.es_cloud_id or self.es_url):
+            errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
+        return errors
+
+    def validate_for_ingestion(self) -> None:
+        errors = self._common_errors()
         if self.chunk_size <= 0:
             errors.append("CHUNK_SIZE 必须大于 0")
         if not 0 <= self.chunk_overlap < self.chunk_size:
             errors.append("CHUNK_OVERLAP 必须满足 0 <= overlap < CHUNK_SIZE")
-        if not (self.es_cloud_id or self.es_url):
-            errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
+        if errors:
+            raise ValueError("配置校验失败：" + "；".join(errors))
+
+    def validate_for_search(self) -> None:
+        errors = self._common_errors()
         if errors:
             raise ValueError("配置校验失败：" + "；".join(errors))
 

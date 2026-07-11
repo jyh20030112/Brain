@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from src.models import TextChunk
-from src.storage.elasticsearch_store import ESStore, _docs_index
+from brain.models import TextChunk
+from brain.storage.elasticsearch_store import ESStore, _docs_index
 
 
 def _chunk() -> TextChunk:
@@ -99,7 +99,7 @@ def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("src.storage.elasticsearch_store._es_ctx", fake_context)
+    monkeypatch.setattr("brain.storage.elasticsearch_store._es_ctx", fake_context)
     published = ESStore("wid", embedding_dim=2).index_docs([_chunk()], [[0.1, 0.2]])
 
     assert published == alias
@@ -123,7 +123,7 @@ def test_index_docs_keeps_current_alias_when_bulk_write_fails(monkeypatch):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("src.storage.elasticsearch_store._es_ctx", fake_context)
+    monkeypatch.setattr("brain.storage.elasticsearch_store._es_ctx", fake_context)
 
     with pytest.raises(RuntimeError, match="批量入库失败"):
         ESStore("wid", embedding_dim=2).index_docs([_chunk()], [[0.1, 0.2]])

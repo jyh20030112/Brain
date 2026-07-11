@@ -1,5 +1,5 @@
-from src.documents.cleaning import clean_docs, clean_text
-from src.models import DocumentPage, DocumentRecord
+from brain.documents.cleaning import clean_docs, clean_text
+from brain.models import DocumentPage, DocumentRecord
 
 
 def test_clean_text_normalizes_control_chars_whitespace_and_repeated_lines():

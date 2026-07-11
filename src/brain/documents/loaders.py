@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.models import DocumentPage, DocumentRecord
-from src.utils import _short_hash
+from brain.models import DocumentPage, DocumentRecord
+from brain.utils import _short_hash
 
 
 def _load_pdf_pypdf(file_path: Path) -> list[DocumentPage]:

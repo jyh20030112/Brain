@@ -1,4 +1,4 @@
-from src.models import TextChunk
+from brain.models import TextChunk
 
 
 def test_embedding_text_adds_title_and_section_without_changing_content():

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
-from src.config import Config
-from src.constants import SUPPORTED_EXTENSIONS
-from src.documents.chunking import chunk_docs
-from src.documents.cleaning import clean_docs
-from src.documents.loaders import load_docs
-from src.embeddings import EmbeddingClient
-from src.storage.elasticsearch_store import ESStore
+from brain.config import Config
+from brain.constants import SUPPORTED_EXTENSIONS
+from brain.documents.chunking import chunk_docs
+from brain.documents.cleaning import clean_docs
+from brain.documents.loaders import load_docs
+from brain.runtime import build_embedding_client, build_es_store
 
 
-def run_pipeline(cfg: Config) -> None:
+def run_ingestion(cfg: Config) -> None:
     cfg.validate_for_ingestion()
     input_dir = Path(cfg.input_dir).resolve()
     if not input_dir.is_dir():
@@ -32,28 +30,15 @@ def run_pipeline(cfg: Config) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[输出]   {output_dir}")
 
-    workspace_id = hashlib.md5(cfg.project.encode()).hexdigest()[:16]
+    workspace_id = cfg.workspace_id
     print(f"[ID]     {workspace_id}")
 
-    embedding_url = cfg.embedding_url or "http://localhost:11434"
+    embedding_url = cfg.embedding_base_url
     print(f"[Embed]  {cfg.embedding_model} ({cfg.embedding_provider}) @ {embedding_url}")
     print(f"[ES]     {cfg.es_url}")
 
-    embeddings = EmbeddingClient(
-        provider=cfg.embedding_provider,
-        base_url=embedding_url,
-        api_key=cfg.embedding_api_key,
-        model=cfg.embedding_model,
-    )
-    es = ESStore(
-        workspace_id=workspace_id,
-        es_url=cfg.es_url,
-        es_cloud_id=cfg.es_cloud_id,
-        es_user=cfg.es_username,
-        es_pass=cfg.es_password,
-        es_api_key=cfg.es_api_key,
-        embedding_dim=cfg.embedding_dim,
-    )
+    embeddings = build_embedding_client(cfg)
+    es = build_es_store(cfg)
 
     print("\n── 文档加载 + 清洗 ──")
     print(f"  MinerU: {'禁用' if not cfg.mineru_api_token else '已配置（云 API）'}")

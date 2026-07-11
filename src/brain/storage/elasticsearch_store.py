@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 from contextlib import asynccontextmanager
 from numbers import Real
 from uuid import uuid4
 
-from src.models import RetrievedChunk, TextChunk
+from brain.models import RetrievedChunk, TextChunk
 
 
 DEFAULT_RRF_K = 60
@@ -218,7 +219,7 @@ class ESStore:
                         vr = await es.search(index=idx, body=vector_body)
                         vector_hits_raw = vr.get("hits", {}).get("hits", [])
                     except Exception as e:
-                        print(f"  [ES] 向量召回失败: {e}")
+                        print(f"  [ES] 向量召回失败: {e}", file=sys.stderr)
 
                 keyword_hits_raw = []
                 if keyword_k > 0:
@@ -230,9 +231,9 @@ class ESStore:
                         kr = await es.search(index=idx, body=keyword_body)
                         keyword_hits_raw = kr.get("hits", {}).get("hits", [])
                     except Exception as e:
-                        print(f"  [ES] 关键词召回失败: {e}")
+                        print(f"  [ES] 关键词召回失败: {e}", file=sys.stderr)
 
-                def _hit_to_chunk(hit: dict, method: str) -> RetrievedChunk:
+                def _hit_to_chunk(hit: dict, method: str, score: float) -> RetrievedChunk:
                     s = hit.get("_source", {})
                     meta = s.get("metadata") or {}
                     return RetrievedChunk(
@@ -247,11 +248,11 @@ class ESStore:
                             chunk_type=str(s.get("chunk_type", "paragraph")),
                             metadata={str(k): str(v) for k, v in meta.items()},
                         ),
-                        score=float(hit.get("_score", 0)),
+                        score=score,
                         retrieval_method=method,
                     )
 
-                def _rrf(hits: list, route_name: str) -> dict[str, dict]:
+                def _rrf(hits: list) -> dict[str, dict]:
                     scored: dict[str, dict] = {}
                     for rank, h in enumerate(hits, start=1):
                         cid = str(h.get("_source", {}).get("id", ""))
@@ -266,8 +267,8 @@ class ESStore:
                             scored[cid]["item"] = h
                     return scored
 
-                vec_map = _rrf(vector_hits_raw[:vector_k], "vector")
-                kw_map = _rrf(keyword_hits_raw[:keyword_k], "keyword")
+                vec_map = _rrf(vector_hits_raw[:vector_k])
+                kw_map = _rrf(keyword_hits_raw[:keyword_k])
 
                 all_keys = set(vec_map.keys()) | set(kw_map.keys())
                 merged = []
@@ -286,6 +287,6 @@ class ESStore:
                     merged.append((rrf_score, best_hit, route))
 
                 merged.sort(key=lambda x: x[0], reverse=True)
-                return [_hit_to_chunk(h, route) for _, h, route in merged[:top_k]]
+                return [_hit_to_chunk(h, route, score) for score, h, route in merged[:top_k]]
 
         return _run_async(_run())

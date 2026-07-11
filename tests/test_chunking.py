@@ -1,5 +1,5 @@
-from src.documents.chunking import _estimate_token_count, _looks_like_heading, chunk_docs
-from src.models import DocumentPage, DocumentRecord
+from brain.documents.chunking import _estimate_token_count, _looks_like_heading, chunk_docs
+from brain.models import DocumentPage, DocumentRecord
 
 
 def _doc(text: str) -> DocumentRecord:
