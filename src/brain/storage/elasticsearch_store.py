@@ -3,57 +3,20 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
-from contextlib import asynccontextmanager
 from numbers import Real
+from typing import Callable
 from uuid import uuid4
 
 from brain.models import RetrievedChunk, TextChunk
+from brain.storage.client import es_context, response_body, run_async
 
 
 DEFAULT_RRF_K = 60
 
 
-@asynccontextmanager
-async def _es_ctx(
-    *,
-    url: str = "",
-    cloud_id: str = "",
-    api_key: str = "",
-    username: str = "",
-    password: str = "",
-):
-    from elasticsearch import AsyncElasticsearch
-
-    kwargs: dict = {"verify_certs": True, "request_timeout": 120, "max_retries": 3, "retry_on_timeout": True}
-    if cloud_id:
-        kwargs["cloud_id"] = cloud_id.strip()
-    elif url:
-        kwargs["hosts"] = [url.strip().rstrip("/")]
-    else:
-        raise ValueError("必须提供 es_cloud_id 或 es_url")
-    if api_key:
-        kwargs["api_key"] = api_key.strip()
-    elif username and password:
-        kwargs["basic_auth"] = (username.strip(), password.strip())
-    client = AsyncElasticsearch(**kwargs)
-    try:
-        yield client
-    finally:
-        await client.close()
-
-
 def _docs_index(workspace_id: str) -> str:
     """当前可查询的 docs 索引别名。"""
     return f"docs_{workspace_id.lower()}_current"
-
-
-def _run_async(coro):
-    """在同步上下文中执行协程。"""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.new_event_loop().run_until_complete(coro)
-    raise RuntimeError("不能在已有事件循环中同步调用 ES 方法")
 
 
 class ESStore:
@@ -107,7 +70,7 @@ class ESStore:
 
     @staticmethod
     def _raise_on_bulk_errors(response: dict) -> None:
-        body = getattr(response, "body", response)
+        body = response_body(response)
         if not body.get("errors"):
             return
         errors = []
@@ -120,12 +83,19 @@ class ESStore:
         detail = "；".join(errors) or "Elasticsearch bulk 返回 errors=true"
         raise RuntimeError(f"批量入库失败：{detail}")
 
-    def index_docs(self, chunks: list[TextChunk], embeddings: list[list[float]]) -> str:
+    def index_docs(
+        self,
+        chunks: list[TextChunk],
+        embeddings: list[list[float]],
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+        publishing_callback: Callable[[], None] | None = None,
+    ) -> str:
         """写入新版本索引；全部成功并校验数量后，原子切换查询别名。"""
         self._validate_embeddings(chunks, embeddings)
 
         async def _run():
-            async with _es_ctx(
+            async with es_context(
                 url=self.es_url,
                 cloud_id=self.es_cloud_id,
                 api_key=self.es_api_key,
@@ -159,15 +129,23 @@ class ESStore:
                         if ops:
                             response = await es.bulk(operations=ops, refresh=False)
                             self._raise_on_bulk_errors(response)
+                            if progress_callback:
+                                await asyncio.to_thread(
+                                    progress_callback,
+                                    min(i + len(batch_c), len(chunks)),
+                                    len(chunks),
+                                )
 
                     await es.indices.refresh(index=staging_index)
                     count_response = await es.count(index=staging_index)
-                    indexed = getattr(count_response, "body", count_response)
+                    indexed = response_body(count_response)
                     if int(indexed.get("count", -1)) != len(chunks):
                         raise RuntimeError(f"索引计数校验失败：实际 {indexed.get('count')}，预期 {len(chunks)}")
 
+                    if publishing_callback:
+                        await asyncio.to_thread(publishing_callback)
                     existing = await es.options(ignore_status=404).indices.get_alias(name=alias)
-                    existing_body = getattr(existing, "body", existing)
+                    existing_body = response_body(existing)
                     previous_indices = sorted(existing_body.keys()) if hasattr(existing_body, "keys") else []
                     actions = [{"remove": {"index": index, "alias": alias}} for index in previous_indices]
                     actions.append({"add": {"index": staging_index, "alias": alias}})
@@ -179,7 +157,7 @@ class ESStore:
                 print(f"  [索引] docs: {len(chunks)} 条写入完成，已发布到 {alias}")
                 return alias
 
-        return _run_async(_run())
+        return run_async(_run())
 
     def search_docs(
         self,
@@ -193,7 +171,7 @@ class ESStore:
         """两路独立召回 + RRF 融合，与原始 QASearchService 逻辑一致。"""
 
         async def _run():
-            async with _es_ctx(
+            async with es_context(
                 url=self.es_url,
                 cloud_id=self.es_cloud_id,
                 api_key=self.es_api_key,
@@ -289,4 +267,4 @@ class ESStore:
                 merged.sort(key=lambda x: x[0], reverse=True)
                 return [_hit_to_chunk(h, route, score) for score, h, route in merged[:top_k]]
 
-        return _run_async(_run())
+        return run_async(_run())

@@ -99,8 +99,15 @@ def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store._es_ctx", fake_context)
-    published = ESStore("wid", embedding_dim=2).index_docs([_chunk()], [[0.1, 0.2]])
+    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
+    progress = []
+    publishing = []
+    published = ESStore("wid", embedding_dim=2).index_docs(
+        [_chunk()],
+        [[0.1, 0.2]],
+        progress_callback=lambda current, total: progress.append((current, total)),
+        publishing_callback=lambda: publishing.append(True),
+    )
 
     assert published == alias
     staging = client.created[0]
@@ -111,6 +118,8 @@ def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
         {"add": {"index": staging, "alias": alias}},
     ]
     assert client.deleted == []
+    assert progress == [(1, 1)]
+    assert publishing == [True]
 
 
 def test_index_docs_keeps_current_alias_when_bulk_write_fails(monkeypatch):
@@ -123,7 +132,7 @@ def test_index_docs_keeps_current_alias_when_bulk_write_fails(monkeypatch):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store._es_ctx", fake_context)
+    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
 
     with pytest.raises(RuntimeError, match="批量入库失败"):
         ESStore("wid", embedding_dim=2).index_docs([_chunk()], [[0.1, 0.2]])

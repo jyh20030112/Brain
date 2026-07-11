@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 brain-ingest = "brain.cli.ingest:main"
 brain-search = "brain.cli.search:main"
+brain-status = "brain.cli.status:main"
 
 [build-system]
 requires = ["hatchling"]

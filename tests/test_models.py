@@ -11,8 +11,8 @@ def test_embedding_text_adds_title_and_section_without_changing_content():
         page_number=1,
         section="使用方法",
         chunk_type="paragraph",
-        metadata={"document_title": "产品手册"},
+        metadata={"document_title": "操作手册"},
     )
 
-    assert chunk.embedding_text == "文档标题：产品手册\n章节标题：使用方法\n正文：早晚洁面后使用。"
+    assert chunk.embedding_text == "文档标题：操作手册\n章节标题：使用方法\n正文：早晚洁面后使用。"
     assert chunk.content == "早晚洁面后使用。"

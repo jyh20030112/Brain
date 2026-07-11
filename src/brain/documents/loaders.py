@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from brain.models import DocumentPage, DocumentRecord
 from brain.utils import _short_hash
@@ -109,13 +110,15 @@ def load_docs(
     *,
     mineru_api_token: str = "",
     output_dir: Path | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[DocumentRecord]:
     documents: list[DocumentRecord] = []
     mineru_ok, mineru_msg = _mineru_available(mineru_api_token)
     if mineru_api_token and not mineru_ok:
         print(f"  [警告] MinerU 不可用: {mineru_msg}，PDF 将使用 pypdf")
 
-    for fp in file_paths:
+    total = len(file_paths)
+    for position, fp in enumerate(file_paths, start=1):
         ext = fp.suffix.lower()
         if ext == ".pdf":
             if mineru_ok:
@@ -149,4 +152,6 @@ def load_docs(
                 metadata={"extension": ext.lstrip(".")},
             )
         )
+        if progress_callback:
+            progress_callback(position, total)
     return documents

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 class EmbeddingClient:
@@ -31,14 +31,22 @@ class EmbeddingClient:
         else:
             self._client = None
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(
+        self,
+        texts: list[str],
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> list[list[float]]:
         if not texts:
             return []
         if self.provider == "ollama":
-            return self._embed_ollama(texts)
-        return self._embed_openai(texts)
+            return self._embed_ollama(texts, progress_callback)
+        return self._embed_openai(texts, progress_callback)
 
-    def _embed_openai(self, texts: list[str]) -> list[list[float]]:
+    def _embed_openai(
+        self,
+        texts: list[str],
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for index in range(0, len(texts), 64):
             batch = texts[index : index + 64]
@@ -48,15 +56,21 @@ class EmbeddingClient:
                     vectors = [item.embedding for item in response.data]
                     if len(vectors) != len(batch):
                         raise ValueError(f"Embedding API 返回 {len(vectors)} 条向量，预期 {len(batch)} 条")
-                    embeddings.extend(vectors)
                     break
                 except Exception as exc:
                     if attempt == 2:
                         raise RuntimeError(f"embedding 第 {index // 64 + 1} 批连续 3 次失败") from exc
                     time.sleep(min(2.0 * (attempt + 1), 5.0))
+            embeddings.extend(vectors)
+            if progress_callback:
+                progress_callback(len(embeddings), len(texts))
         return embeddings
 
-    def _embed_ollama(self, texts: list[str]) -> list[list[float]]:
+    def _embed_ollama(
+        self,
+        texts: list[str],
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> list[list[float]]:
         import urllib.request
 
         url = f"{self.base_url}/api/embed"
@@ -73,10 +87,12 @@ class EmbeddingClient:
                     if not isinstance(vectors, list) or len(vectors) != len(batch):
                         count = len(vectors) if isinstance(vectors, list) else 0
                         raise ValueError(f"Ollama 返回 {count} 条向量，预期 {len(batch)} 条")
-                    embeddings.extend(vectors)
                     break
                 except Exception as exc:
                     if attempt == 2:
                         raise RuntimeError(f"Ollama embedding 第 {index // 64 + 1} 批连续 3 次失败") from exc
                     time.sleep(min(2.0 * (attempt + 1), 5.0))
+            embeddings.extend(vectors)
+            if progress_callback:
+                progress_callback(len(embeddings), len(texts))
         return embeddings

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 class Config:
     # ---- 输入输出 ----
     input_dir: str = "./docs/"
-    project: str = "省心说客服"
+    project: str = "default-knowledge-base"
     output_dir: str = "mvp_output"
 
     # ---- Embedding ----
@@ -70,6 +70,15 @@ class Config:
         if errors:
             raise ValueError("配置校验失败：" + "；".join(errors))
 
+    def validate_for_status(self) -> None:
+        errors: list[str] = []
+        if not self.project.strip():
+            errors.append("PROJECT 不能为空")
+        if not (self.es_cloud_id or self.es_url):
+            errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
+        if errors:
+            raise ValueError("配置校验失败：" + "；".join(errors))
+
     @classmethod
     def from_env(cls) -> Config:
         """从环境变量加载配置（.env 文件需提前 load_dotenv）。"""
@@ -77,7 +86,7 @@ class Config:
 
         return cls(
             input_dir=os.getenv("INPUT_DIR", "./docs/"),
-            project=os.getenv("PROJECT", "省心说客服"),
+            project=os.getenv("PROJECT", "default-knowledge-base"),
             output_dir=os.getenv("OUTPUT_DIR", "mvp_output"),
             embedding_provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
             embedding_url=os.getenv("EMBEDDING_URL", ""),
