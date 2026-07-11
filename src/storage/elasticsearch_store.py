@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
+import math
 from contextlib import asynccontextmanager
+from numbers import Real
+from uuid import uuid4
 
-from src.models import QAPair, RetrievedChunk, TextChunk
+from src.models import RetrievedChunk, TextChunk
 
 
 DEFAULT_RRF_K = 60
@@ -41,11 +42,8 @@ async def _es_ctx(
 
 
 def _docs_index(workspace_id: str) -> str:
-    return f"docs_{workspace_id.lower()}"
-
-
-def _qa_index(workspace_id: str) -> str:
-    return f"qa_{workspace_id.lower()}"
+    """当前可查询的 docs 索引别名。"""
+    return f"docs_{workspace_id.lower()}_current"
 
 
 def _run_async(coro):
@@ -95,7 +93,36 @@ class ESStore:
             }
         }
 
-    def index_docs(self, chunks: list[TextChunk], embeddings: list[list[float]]):
+    def _validate_embeddings(self, chunks: list[TextChunk], embeddings: list[list[float]]) -> None:
+        if len(embeddings) != len(chunks):
+            raise ValueError(f"向量数量不匹配：获得 {len(embeddings)}，预期 {len(chunks)}")
+        for position, vector in enumerate(embeddings, start=1):
+            if not isinstance(vector, (list, tuple)):
+                raise ValueError(f"第 {position} 条向量不是数组")
+            if len(vector) != self.emb_dim:
+                raise ValueError(f"第 {position} 条向量维度为 {len(vector)}，预期 {self.emb_dim}")
+            if not all(isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value) for value in vector):
+                raise ValueError(f"第 {position} 条向量包含非有限数值")
+
+    @staticmethod
+    def _raise_on_bulk_errors(response: dict) -> None:
+        body = getattr(response, "body", response)
+        if not body.get("errors"):
+            return
+        errors = []
+        for item in body.get("items", []):
+            operation = item.get("index", {})
+            if "error" in operation:
+                errors.append(f"{operation.get('_id', '<unknown>')}: {operation['error']}")
+            if len(errors) == 3:
+                break
+        detail = "；".join(errors) or "Elasticsearch bulk 返回 errors=true"
+        raise RuntimeError(f"批量入库失败：{detail}")
+
+    def index_docs(self, chunks: list[TextChunk], embeddings: list[list[float]]) -> str:
+        """写入新版本索引；全部成功并校验数量后，原子切换查询别名。"""
+        self._validate_embeddings(chunks, embeddings)
+
         async def _run():
             async with _es_ctx(
                 url=self.es_url,
@@ -104,35 +131,54 @@ class ESStore:
                 username=self.es_user,
                 password=self.es_pass,
             ) as es:
-                idx = _docs_index(self.wid)
-                await es.options(ignore_status=404).indices.delete(index=idx)
-                await es.indices.create(index=idx, mappings=self._docs_mapping())
-                for i in range(0, len(chunks), 50):
-                    batch_c = chunks[i : i + 50]
-                    batch_e = embeddings[i : i + 50]
-                    ops = []
-                    for offset, c in enumerate(batch_c):
-                        e = batch_e[offset] if offset < len(batch_e) else []
-                        ops.append({"index": {"_index": idx, "_id": c.id}})
-                        doc = {
-                            "id": c.id,
-                            "workspace_id": c.workspace_id,
-                            "file_name": c.file_name,
-                            "source_path": c.source_path,
-                            "content": c.content,
-                            "page_number": c.page_number,
-                            "section": c.section,
-                            "chunk_type": c.chunk_type,
-                            "metadata": c.metadata,
-                        }
-                        if e:
-                            doc["embedding"] = e
-                        ops.append(doc)
-                    if ops:
-                        await es.bulk(operations=ops, refresh=True)
-                print(f"  [索引] docs: {len(chunks)} 条写入完成")
+                alias = _docs_index(self.wid)
+                staging_index = f"{alias}_v_{uuid4().hex[:12]}"
+                await es.indices.create(index=staging_index, mappings=self._docs_mapping())
+                try:
+                    for i in range(0, len(chunks), 50):
+                        batch_c = chunks[i : i + 50]
+                        batch_e = embeddings[i : i + 50]
+                        ops = []
+                        for c, vector in zip(batch_c, batch_e, strict=True):
+                            ops.append({"index": {"_index": staging_index, "_id": c.id}})
+                            ops.append(
+                                {
+                                    "id": c.id,
+                                    "workspace_id": c.workspace_id,
+                                    "file_name": c.file_name,
+                                    "source_path": c.source_path,
+                                    "content": c.content,
+                                    "page_number": c.page_number,
+                                    "section": c.section,
+                                    "chunk_type": c.chunk_type,
+                                    "metadata": c.metadata,
+                                    "embedding": vector,
+                                }
+                            )
+                        if ops:
+                            response = await es.bulk(operations=ops, refresh=False)
+                            self._raise_on_bulk_errors(response)
 
-        _run_async(_run())
+                    await es.indices.refresh(index=staging_index)
+                    count_response = await es.count(index=staging_index)
+                    indexed = getattr(count_response, "body", count_response)
+                    if int(indexed.get("count", -1)) != len(chunks):
+                        raise RuntimeError(f"索引计数校验失败：实际 {indexed.get('count')}，预期 {len(chunks)}")
+
+                    existing = await es.options(ignore_status=404).indices.get_alias(name=alias)
+                    existing_body = getattr(existing, "body", existing)
+                    previous_indices = sorted(existing_body.keys()) if hasattr(existing_body, "keys") else []
+                    actions = [{"remove": {"index": index, "alias": alias}} for index in previous_indices]
+                    actions.append({"add": {"index": staging_index, "alias": alias}})
+                    await es.indices.update_aliases(actions=actions)
+                except Exception:
+                    await es.options(ignore_status=404).indices.delete(index=staging_index)
+                    raise
+
+                print(f"  [索引] docs: {len(chunks)} 条写入完成，已发布到 {alias}")
+                return alias
+
+        return _run_async(_run())
 
     def search_docs(
         self,
@@ -243,53 +289,3 @@ class ESStore:
                 return [_hit_to_chunk(h, route) for _, h, route in merged[:top_k]]
 
         return _run_async(_run())
-
-    def _qa_mapping(self) -> dict:
-        return {
-            "properties": {
-                "id": {"type": "keyword"},
-                "workspace_id": {"type": "keyword"},
-                "question": {"type": "text", "analyzer": "standard"},
-                "answer": {"type": "text", "analyzer": "standard"},
-                "category": {"type": "keyword"},
-                "risk_notes": {"type": "text"},
-                "evidence": {"type": "object", "enabled": False},
-                "metadata": {"type": "object", "enabled": False},
-                "qa_embedding": {"type": "dense_vector", "dims": self.emb_dim, "index": True, "similarity": "cosine"},
-            }
-        }
-
-    def index_qa(self, qa_pairs: list[QAPair], embeddings: list[list[float]]):
-        async def _run():
-            async with _es_ctx(
-                url=self.es_url,
-                cloud_id=self.es_cloud_id,
-                api_key=self.es_api_key,
-                username=self.es_user,
-                password=self.es_pass,
-            ) as es:
-                idx = _qa_index(self.wid)
-                await es.options(ignore_status=404).indices.delete(index=idx)
-                await es.indices.create(index=idx, mappings=self._qa_mapping())
-                ops = []
-                for offset, qa in enumerate(qa_pairs):
-                    emb = embeddings[offset] if offset < len(embeddings) else []
-                    doc_id = f"qa_{hashlib.md5(qa.question.encode()).hexdigest()[:16]}"
-                    doc = {
-                        "id": doc_id,
-                        "workspace_id": self.wid,
-                        "question": qa.question,
-                        "answer": qa.answer,
-                        "category": qa.category,
-                        "risk_notes": " | ".join(qa.risk_notes),
-                        "evidence": json.dumps([e.to_dict() for e in qa.evidence], ensure_ascii=False),
-                    }
-                    if emb:
-                        doc["qa_embedding"] = emb
-                    ops.append({"index": {"_index": idx, "_id": doc_id}})
-                    ops.append(doc)
-                if ops:
-                    await es.bulk(operations=ops, refresh=True)
-                print(f"  [索引] qa: {len(qa_pairs)} 条写入完成")
-
-        _run_async(_run())

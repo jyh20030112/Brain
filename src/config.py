@@ -10,14 +10,10 @@ class Config:
     project: str = "省心说客服"
     output_dir: str = "mvp_output"
 
-    # ---- LLM ----
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = ""
-
     # ---- Embedding ----
     embedding_provider: str = "openai"
     embedding_url: str = ""
+    embedding_api_key: str = ""
     embedding_model: str = ""
     embedding_dim: int = 1024
 
@@ -31,11 +27,28 @@ class Config:
     # ---- MinerU (PDF OCR，可选) ----
     mineru_api_token: str = ""
 
-    # ---- QA 生成参数 ----
-    qa_limit: int = 12
-    qa_generalization: int = 2
+    # ---- 切片参数 ----
     chunk_size: int = 512
     chunk_overlap: int = 120
+
+    def validate_for_ingestion(self) -> None:
+        errors: list[str] = []
+        if self.embedding_provider not in {"openai", "ollama"}:
+            errors.append("EMBEDDING_PROVIDER 仅支持 openai 或 ollama")
+        if not self.embedding_model:
+            errors.append("EMBEDDING_MODEL 不能为空")
+        if self.embedding_provider == "openai" and not self.embedding_url:
+            errors.append("使用 OpenAI 兼容 embedding 时必须配置 EMBEDDING_URL")
+        if self.embedding_dim <= 0:
+            errors.append("EMBEDDING_DIM 必须大于 0")
+        if self.chunk_size <= 0:
+            errors.append("CHUNK_SIZE 必须大于 0")
+        if not 0 <= self.chunk_overlap < self.chunk_size:
+            errors.append("CHUNK_OVERLAP 必须满足 0 <= overlap < CHUNK_SIZE")
+        if not (self.es_cloud_id or self.es_url):
+            errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
+        if errors:
+            raise ValueError("配置校验失败：" + "；".join(errors))
 
     @classmethod
     def from_env(cls) -> Config:
@@ -46,11 +59,10 @@ class Config:
             input_dir=os.getenv("INPUT_DIR", "./docs/"),
             project=os.getenv("PROJECT", "省心说客服"),
             output_dir=os.getenv("OUTPUT_DIR", "mvp_output"),
-            llm_base_url=os.getenv("LLM_BASE_URL", ""),
-            llm_api_key=os.getenv("LLM_API_KEY", ""),
-            llm_model=os.getenv("LLM_MODEL", ""),
             embedding_provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
             embedding_url=os.getenv("EMBEDDING_URL", ""),
+            # 兼容原先复用 LLM_API_KEY 的部署；新配置应使用 EMBEDDING_API_KEY。
+            embedding_api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "")),
             embedding_model=os.getenv("EMBEDDING_MODEL", "bge-m3"),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
             es_cloud_id=os.getenv("ES_CLOUD_ID", ""),
@@ -59,8 +71,6 @@ class Config:
             es_password=os.getenv("ES_PASSWORD", ""),
             es_api_key=os.getenv("ES_API_KEY", ""),
             mineru_api_token=os.getenv("MINERU_API_TOKEN", ""),
-            qa_limit=int(os.getenv("QA_LIMIT", "12")),
-            qa_generalization=int(os.getenv("QA_GENERALIZATION", "2")),
             chunk_size=int(os.getenv("CHUNK_SIZE", "512")),
             chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "120")),
         )

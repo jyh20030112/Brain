@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass(slots=True)
@@ -42,39 +41,3 @@ class RetrievedChunk:
     chunk: TextChunk
     score: float
     retrieval_method: str
-
-
-@dataclass(slots=True)
-class QAEvidence:
-    chunk_id: str
-    file_name: str
-    excerpt: str
-    page_number: int | None
-    score: float
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "chunk_id": self.chunk_id,
-            "file_name": self.file_name,
-            "excerpt": self.excerpt,
-            "page_number": self.page_number,
-            "score": self.score,
-        }
-
-
-@dataclass(slots=True)
-class QAPair:
-    question: str
-    answer: str
-    category: str
-    risk_notes: list[str]
-    evidence: list[QAEvidence] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "question": self.question,
-            "answer": self.answer,
-            "category": self.category,
-            "risk_notes": self.risk_notes,
-            "evidence": [e.to_dict() for e in self.evidence],
-        }
