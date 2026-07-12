@@ -3,7 +3,7 @@ import json
 import pytest
 
 from brain.cli import ingest, search, status
-from brain.models import RetrievedChunk, TextChunk
+from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
 from brain.progress.models import IngestionJob
 from brain.project import atomic_write_json
 
@@ -43,7 +43,7 @@ def test_search_cli_requires_fixed_flags_and_outputs_json(monkeypatch, capsys):
     class FakeService:
         def search(self, question, *, top_k):
             assert (question, top_k) == ("如何配置？", 10)
-            return [_result()]
+            return RetrievalOutcome(results=[_result()], warnings=[])
 
     monkeypatch.setattr(search.SearchService, "from_config", lambda cfg: FakeService())
     assert search.main(
@@ -125,6 +125,25 @@ def test_status_project_mode_streams_json_lines_until_terminal(monkeypatch, tmp_
     assert [json.loads(line)["status"] for line in lines] == ["running", "succeeded"]
 
 
+def test_status_does_not_emit_again_when_persisted_state_is_unchanged(monkeypatch, tmp_path, capsys):
+    running = _job()
+
+    class SequenceStore:
+        def __init__(self, project_dir):
+            self.jobs = [running, running, _job("succeeded", "completed", 1, 1)]
+
+        def get_job(self):
+            return self.jobs.pop(0)
+
+    monkeypatch.setattr(status, "FileProgressStore", SequenceStore)
+    monkeypatch.setattr(status.time, "sleep", lambda seconds: None)
+
+    assert status.main(["--output-dir", str(tmp_path), "--project", "my-knowledge-base"]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+
+    assert [json.loads(line)["status"] for line in lines] == ["running", "succeeded"]
+
+
 def test_status_project_mode_exits_nonzero_for_stale_job(monkeypatch, tmp_path, capsys):
     stale = _job()
     stale.updated_at = "2000-01-01T00:00:00+00:00"
@@ -139,4 +158,7 @@ def test_status_project_mode_exits_nonzero_for_stale_job(monkeypatch, tmp_path, 
     monkeypatch.setattr(status, "FileProgressStore", StaleStore)
 
     assert status.main(["--output-dir", str(tmp_path), "--project", "my-knowledge-base"]) == 1
-    assert json.loads(capsys.readouterr().out)["status"] == "stale"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "stale"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "ingestion_stale"

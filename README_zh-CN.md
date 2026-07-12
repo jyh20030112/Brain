@@ -72,6 +72,7 @@ ES_URL=http://localhost:9200
 ES_USERNAME=
 ES_PASSWORD=
 ES_API_KEY=
+ES_INDEX_VERSIONS_TO_KEEP=2
 
 MINERU_API_TOKEN=
 CHUNK_SIZE=512
@@ -96,9 +97,12 @@ uv run brain-ingest \
 - SHA-256 未变化的同名文件跳过。
 - 本次输入未出现的历史文件继续保留。
 - 同一批次出现重复 basename 时整批失败。
-- 同一 project 目录同时只允许一个入库任务。
+- 同一主机上的同一 project 同时只允许一个入库任务，即使传入不同的 output 目录也不能绕过锁。
 
 入库采用 staging 索引和 Elasticsearch alias 原子切换。标准输出只包含最终 JSON，运行日志写入标准错误。
+切换成功后按照 `ES_INDEX_VERSIONS_TO_KEEP` 回收旧物理索引；默认保留当前版本和 1 个回滚版本。
+
+跳过未变化文件之前，会校验 manifest 记录的物理索引是否仍由当前 alias 指向，并核对 chunk 数。需要修复时，本次输入必须包含全部历史文件，系统才会自动重建，避免历史数据静默丢失。
 
 项目产物目录：
 
@@ -154,6 +158,7 @@ uv run brain-search \
 - `top-k` 是最终返回数量，范围为 1–100。
 - 每路候选数为 `max(2 × top-k, 20)`。
 - 结果包含文件名、来源路径、页码、章节、原始正文、召回方法和 RRF 分数。
+- project 不存在时返回 `project_not_found`；单路召回失败时成功结果包含 `warnings`，两路全部失败时返回 `retrieval_failed` 和非零退出码。
 - 只召回原始知识块，不执行 LLM 答案生成。
 
 ## 支持文件
@@ -172,4 +177,10 @@ PDF、DOCX、TXT、TEXT、Markdown、CSV、XLSX
 
 ```bash
 uv run pytest -q
+```
+
+单元测试使用隔离的 fake store。如需额外验证真实 Elasticsearch 的 bulk、alias、召回和旧版本回收链路：
+
+```bash
+BRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
 ```

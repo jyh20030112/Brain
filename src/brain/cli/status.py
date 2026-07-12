@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from brain.cli.output import emit_error, emit_json
 from brain.manifest import MANIFEST_NAME
 from brain.progress.file_store import FileProgressStore
 from brain.progress.models import IngestionJob
@@ -48,12 +48,15 @@ def _is_stale(job: IngestionJob) -> bool:
 
 
 def _job_payload(job: IngestionJob) -> dict:
-    payload = {"ok": True, **job.to_dict()}
+    stale = _is_stale(job)
+    ok = not stale and job.status not in {"failed", "failed_manifest_sync", "cancelled"}
+    payload = {"ok": ok, **job.to_dict()}
     payload["stage_percent"] = job.stage_percent
     payload["duration"] = _duration(job)
-    payload["stale"] = _is_stale(job)
-    if payload["stale"]:
+    payload["stale"] = stale
+    if stale:
         payload["status"] = "stale"
+        payload["error"] = {"code": "ingestion_stale", "message": "入库任务超过 30 秒没有心跳"}
     return payload
 
 
@@ -95,13 +98,13 @@ def _monitor(output_dir: Path, project: str) -> int:
         try:
             job = store.get_job()
         except Exception as exc:
-            return _error("invalid_progress", str(exc))
+            return emit_error("invalid_progress", str(exc))
         if job is None:
-            return _error("progress_not_found", f"project 没有 progress.json: {project}")
+            return emit_error("progress_not_found", f"project 没有 progress.json: {project}")
         payload = _job_payload(job)
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        encoded = json.dumps(job.to_dict(), ensure_ascii=False, sort_keys=True)
         if encoded != previous:
-            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            emit_json(payload)
             previous = encoded
         if payload["stale"]:
             return 1
@@ -110,21 +113,16 @@ def _monitor(output_dir: Path, project: str) -> int:
         time.sleep(1.0)
 
 
-def _error(code: str, message: str) -> int:
-    print(json.dumps({"ok": False, "error": {"code": code, "message": message}}, ensure_ascii=False), file=sys.stderr)
-    return 1
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         output_dir = Path(args.output_dir).expanduser().resolve()
         if args.project:
             return _monitor(output_dir, validate_project_name(args.project))
-        print(json.dumps(_catalog(output_dir), ensure_ascii=False, indent=2))
+        emit_json(_catalog(output_dir), indent=2)
         return 0
     except Exception as exc:
-        return _error("status_failed", str(exc))
+        return emit_error("status_failed", str(exc))
 
 
 if __name__ == "__main__":

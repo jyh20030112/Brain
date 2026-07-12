@@ -23,4 +23,5 @@ def build_es_store(cfg: Config) -> ESStore:
         es_pass=cfg.es_password,
         es_api_key=cfg.es_api_key,
         embedding_dim=cfg.embedding_dim,
+        index_versions_to_keep=cfg.es_index_versions_to_keep,
     )

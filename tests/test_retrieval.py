@@ -1,6 +1,6 @@
 import pytest
 
-from brain.models import RetrievedChunk, TextChunk
+from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
 from brain.retrieval import SearchService
 
 
@@ -27,13 +27,16 @@ class FakeStore:
             section="使用方法",
             chunk_type="paragraph",
         )
-        return [RetrievedChunk(chunk=chunk, score=0.03, retrieval_method="rrf")]
+        return RetrievalOutcome(
+            results=[RetrievedChunk(chunk=chunk, score=0.03, retrieval_method="rrf")],
+            warnings=[],
+        )
 
 
 def test_search_service_embeds_and_retrieves_query():
-    results = SearchService(FakeEmbeddingClient(), FakeStore()).search(" 怎么使用？ ", top_k=3)
+    outcome = SearchService(FakeEmbeddingClient(), FakeStore()).search(" 怎么使用？ ", top_k=3)
 
-    assert results[0].chunk.content == "早晚使用。"
+    assert outcome.results[0].chunk.content == "早晚使用。"
 
 
 @pytest.mark.parametrize("query, top_k", [("", 5), ("问题", 0), ("问题", 101)])

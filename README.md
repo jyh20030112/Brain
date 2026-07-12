@@ -72,6 +72,7 @@ ES_URL=http://localhost:9200
 ES_USERNAME=
 ES_PASSWORD=
 ES_API_KEY=
+ES_INDEX_VERSIONS_TO_KEEP=2
 
 MINERU_API_TOKEN=
 CHUNK_SIZE=512
@@ -96,9 +97,12 @@ All three arguments are required. File identity is the case-insensitive basename
 - Unchanged files are skipped by SHA-256.
 - Existing files absent from the current input remain in the project.
 - Duplicate basenames in one input batch fail the entire ingestion.
-- Only one ingestion may run for the same project directory at a time.
+- Only one ingestion may run for the same project on the same host, even when different output directories are passed.
 
 Documents are published through a staging index and an atomic Elasticsearch alias switch. Standard output contains only the final JSON result; operational logs go to standard error.
+After a successful switch, old physical index versions are removed according to `ES_INDEX_VERSIONS_TO_KEEP` (default: current plus one rollback version).
+
+Before skipping unchanged files, ingestion verifies that the manifest's physical index is still behind the active alias and that the chunk count matches. If repair is needed, all historical files must be present in the current input so the project can be rebuilt without losing data.
 
 Project artifacts are stored as follows:
 
@@ -154,6 +158,7 @@ All three arguments are required, and output is always JSON. Retrieval combines 
 - `top-k` is the final result count and must be between 1 and 100.
 - Each route retrieves `max(2 × top-k, 20)` candidates.
 - Results include the filename, source path, page, section, original text, retrieval method, and RRF score.
+- A missing project returns `project_not_found`. If one route fails, successful output contains a `warnings` array; if both routes fail, the command returns `retrieval_failed` with a non-zero exit code.
 - The command retrieves original chunks only; it does not generate an LLM answer.
 
 ## Supported Files
@@ -172,4 +177,10 @@ An existing `docs_<workspace>_current` alias is copied into the new staging vers
 
 ```bash
 uv run pytest -q
+```
+
+Unit tests use isolated stores. To additionally run the live Elasticsearch alias, bulk, retrieval, and version-retention integration test:
+
+```bash
+BRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
 ```

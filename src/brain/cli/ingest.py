@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 
 from dotenv import load_dotenv
 
+from brain.cli.output import emit_error, emit_json
 from brain.config import Config
 from brain.ingestion import run_ingestion
 from brain.project import ProjectLockedError, validate_project_name
@@ -19,11 +18,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _error(code: str, message: str) -> int:
-    print(json.dumps({"ok": False, "error": {"code": code, "message": message}}, ensure_ascii=False), file=sys.stderr)
-    return 1
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv()
@@ -32,12 +26,12 @@ def main(argv: list[str] | None = None) -> int:
         cfg.input_dir = args.input_dir
         cfg.output_dir = args.output_dir
         cfg.project = validate_project_name(args.project)
-        print(json.dumps(run_ingestion(cfg), ensure_ascii=False, indent=2))
+        emit_json(run_ingestion(cfg), indent=2)
         return 0
     except ProjectLockedError as exc:
-        return _error("project_locked", str(exc))
+        return emit_error("project_locked", str(exc))
     except Exception as exc:
-        return _error("ingestion_failed", str(exc))
+        return emit_error("ingestion_failed", str(exc))
 
 
 if __name__ == "__main__":

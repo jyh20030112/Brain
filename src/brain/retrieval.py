@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from brain.config import Config
 from brain.embeddings import EmbeddingClient
-from brain.models import RetrievedChunk
+from brain.models import RetrievalOutcome
 from brain.runtime import build_embedding_client, build_es_store
 from brain.storage.elasticsearch_store import ESStore
 
@@ -19,7 +19,7 @@ class SearchService:
         cfg.validate_for_search()
         return cls(build_embedding_client(cfg), build_es_store(cfg))
 
-    def search(self, query: str, *, top_k: int = 5) -> list[RetrievedChunk]:
+    def search(self, query: str, *, top_k: int = 5) -> RetrievalOutcome:
         query = query.strip()
         if not query:
             raise ValueError("查询内容不能为空")

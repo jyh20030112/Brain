@@ -36,3 +36,4 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["integration: requires a live Elasticsearch configured through BRAIN_TEST_ES_URL"]

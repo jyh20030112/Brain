@@ -19,9 +19,10 @@ from brain.manifest import (
     load_pending_manifest,
     write_pending_manifest,
 )
-from brain.progress.file_store import FileProgressStore, utc_now
+from brain.progress.file_store import FileProgressStore
 from brain.project import ProjectLock, get_project_dir, sha256_file
 from brain.runtime import build_embedding_client, build_es_store
+from brain.utils import utc_now
 
 
 class ManifestSyncError(RuntimeError):
@@ -69,7 +70,7 @@ def run_ingestion(cfg: Config) -> dict[str, Any]:
         raise ValueError("input-dir 与 output-dir 不能是同一目录")
 
     project_dir = get_project_dir(output_root, cfg.project)
-    with ProjectLock(project_dir):
+    with ProjectLock(cfg.workspace_id, project_dir):
         progress = FileProgressStore(project_dir)
         job = progress.create_job(project=cfg.project, workspace_id=cfg.workspace_id)
         es = build_es_store(cfg)
@@ -116,12 +117,32 @@ def _execute_ingestion(
             raise ValueError("同一 project 增量入库必须使用相同的 EMBEDDING_DIM")
     previous_files = file_records_by_name(previous_manifest)
     hashes = {path.name.casefold(): sha256_file(path) for path in file_paths}
+    force_rebuild = False
+    if previous_manifest:
+        state = es.active_index_state()
+        expected_version = str(previous_manifest.get("index_version") or "")
+        expected_chunks = int(previous_manifest.get("chunk_count", 0))
+        force_rebuild = (
+            expected_version not in state.get("indices", [])
+            or int(state.get("chunk_count", -1)) != expected_chunks
+        )
+        if force_rebuild:
+            missing_sources = sorted(set(previous_files) - set(hashes))
+            if missing_sources:
+                raise RuntimeError(
+                    "manifest 与 Elasticsearch 当前索引不一致，自动重建需要提供全部历史文件；"
+                    f"本次输入缺少: {', '.join(missing_sources)}"
+                )
+            _log("[恢复] manifest 与 Elasticsearch 不一致，将从本次全部输入重建 project")
+
     added_paths: list[Path] = []
     updated_paths: list[Path] = []
     skipped_paths: list[Path] = []
     for path in file_paths:
         previous = previous_files.get(path.name.casefold())
-        if previous and previous.get("sha256") == hashes[path.name.casefold()]:
+        if previous and force_rebuild:
+            updated_paths.append(path)
+        elif previous and previous.get("sha256") == hashes[path.name.casefold()]:
             skipped_paths.append(path)
         elif previous:
             updated_paths.append(path)

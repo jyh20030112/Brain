@@ -25,6 +25,13 @@ class FakeES:
     def alias_indices(self):
         return [self.version] if self.version else []
 
+    def active_index_state(self):
+        return {
+            "alias": "docs_test_current",
+            "indices": [self.version] if self.version else [],
+            "chunk_count": sum(item["chunk_count"] for item in self.files.values()),
+        }
+
     def publish_incremental(
         self,
         chunks,
@@ -66,13 +73,7 @@ class FakeES:
         inventory = list(self.files.values())
         if prepare_manifest_callback:
             prepare_manifest_callback(inventory, "docs_test_current", self.version)
-        return PublishResult(
-            alias="docs_test_current",
-            index_version=self.version,
-            inventory=inventory,
-            retained_chunks=retained,
-            total_chunks=sum(item["chunk_count"] for item in inventory),
-        )
+        return PublishResult(alias="docs_test_current", total_chunks=sum(item["chunk_count"] for item in inventory))
 
 
 def _config(input_dir, output_dir):
@@ -134,6 +135,43 @@ def test_same_file_name_replaces_old_chunks_and_unchanged_file_is_skipped(monkey
     assert updated["file_count"] == 1
     assert skipped["skipped"] == 1
     assert es.publish_count == 2
+
+
+def test_unchanged_files_rebuild_when_manifest_index_is_missing(monkeypatch, tmp_path):
+    es = FakeES()
+    _install_fakes(monkeypatch, es)
+    input_dir = tmp_path / "docs"
+    input_dir.mkdir()
+    (input_dir / "guide.txt").write_text("访问权限配置。", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    run_ingestion(_config(input_dir, output_dir))
+
+    es.version = None
+    es.files.clear()
+    rebuilt = run_ingestion(_config(input_dir, output_dir))
+
+    assert rebuilt["updated"] == 1
+    assert rebuilt["skipped"] == 0
+    assert es.publish_count == 2
+
+
+def test_inconsistent_index_requires_all_historical_sources(monkeypatch, tmp_path):
+    es = FakeES()
+    _install_fakes(monkeypatch, es)
+    first = tmp_path / "first"
+    first.mkdir()
+    (first / "a.txt").write_text("A", encoding="utf-8")
+    (first / "b.txt").write_text("B", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    run_ingestion(_config(first, output_dir))
+
+    es.version = None
+    second = tmp_path / "second"
+    second.mkdir()
+    (second / "a.txt").write_text("A", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="本次输入缺少: b.txt"):
+        run_ingestion(_config(second, output_dir))
 
 
 def test_missing_manifest_is_rebuilt_from_existing_index_inventory(monkeypatch, tmp_path):

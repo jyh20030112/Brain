@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from brain.project import atomic_write_json, read_json
+from brain.utils import utc_now
 
 
 SCHEMA_VERSION = 1
 MANIFEST_NAME = "manifest.json"
 PENDING_MANIFEST_NAME = ".manifest.pending.json"
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def load_manifest(project_dir: Path) -> dict[str, Any] | None:
@@ -76,10 +72,13 @@ def build_manifest(
 
     files.sort(key=lambda item: item["file_name"].casefold())
     topics: list[str] = []
+    normalized_topics: set[str] = set()
     for item in files:
         topic = str(item.get("title") or Path(item["file_name"]).stem).strip()[:80]
-        if topic and topic.casefold() not in {value.casefold() for value in topics}:
+        normalized = topic.casefold()
+        if topic and normalized not in normalized_topics:
             topics.append(topic)
+            normalized_topics.add(normalized)
         if len(topics) == 5:
             break
     if topics:

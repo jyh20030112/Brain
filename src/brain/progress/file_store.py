@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -8,10 +9,7 @@ from uuid import uuid4
 
 from brain.progress.models import IngestionJob
 from brain.project import atomic_write_json, read_json
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from brain.utils import utc_now
 
 
 class FileProgressStore:
@@ -87,14 +85,20 @@ class FileProgressStore:
         stop = threading.Event()
 
         def _run() -> None:
+            consecutive_failures = 0
             while not stop.wait(interval):
                 try:
                     job = self.get_job()
                     if job is None or job.job_id != job_id or job.is_terminal:
                         return
                     self.update_job(job_id)
-                except Exception:
-                    return
+                    consecutive_failures = 0
+                except Exception as exc:
+                    consecutive_failures += 1
+                    print(
+                        f"[进度] 心跳写入失败（连续 {consecutive_failures} 次）: {exc}",
+                        file=sys.stderr,
+                    )
 
         thread = threading.Thread(target=_run, name=f"heartbeat-{job_id}", daemon=True)
         thread.start()

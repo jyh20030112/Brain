@@ -27,7 +27,7 @@ class EmbeddingClient:
         if provider == "openai":
             from openai import OpenAI
 
-            self._client: Any = OpenAI(api_key=api_key, base_url=self.base_url, timeout=180.0, max_retries=0)
+            self._client: Any = OpenAI(api_key=api_key, base_url=self.base_url, timeout=180.0, max_retries=2)
         else:
             self._client = None
 
@@ -50,17 +50,10 @@ class EmbeddingClient:
         embeddings: list[list[float]] = []
         for index in range(0, len(texts), 64):
             batch = texts[index : index + 64]
-            for attempt in range(3):
-                try:
-                    response = self._client.embeddings.create(model=self.model, input=batch)
-                    vectors = [item.embedding for item in response.data]
-                    if len(vectors) != len(batch):
-                        raise ValueError(f"Embedding API 返回 {len(vectors)} 条向量，预期 {len(batch)} 条")
-                    break
-                except Exception as exc:
-                    if attempt == 2:
-                        raise RuntimeError(f"embedding 第 {index // 64 + 1} 批连续 3 次失败") from exc
-                    time.sleep(min(2.0 * (attempt + 1), 5.0))
+            response = self._client.embeddings.create(model=self.model, input=batch)
+            vectors = [item.embedding for item in response.data]
+            if len(vectors) != len(batch):
+                raise ValueError(f"Embedding API 返回 {len(vectors)} 条向量，预期 {len(batch)} 条")
             embeddings.extend(vectors)
             if progress_callback:
                 progress_callback(len(embeddings), len(texts))

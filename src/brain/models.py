@@ -18,10 +18,6 @@ class DocumentRecord:
     pages: list[DocumentPage]
     metadata: dict[str, str] = field(default_factory=dict)
 
-    @property
-    def raw_text(self) -> str:
-        return "\n\n".join(p.text for p in self.pages if p.text.strip())
-
 
 @dataclass(slots=True)
 class TextChunk:
@@ -53,3 +49,9 @@ class RetrievedChunk:
     chunk: TextChunk
     score: float
     retrieval_method: str
+
+
+@dataclass(slots=True)
+class RetrievalOutcome:
+    results: list[RetrievedChunk]
+    warnings: list[dict[str, str]] = field(default_factory=list)

@@ -10,10 +10,12 @@ def test_validate_project_name_rejects_unsafe_values(value):
 
 
 def test_project_lock_rejects_concurrent_ingestion(tmp_path):
-    project_dir = tmp_path / "my-knowledge-base"
-    with ProjectLock(project_dir):
+    project_dir = tmp_path / "output-a" / "my-knowledge-base"
+    other_project_dir = tmp_path / "output-b" / "my-knowledge-base"
+    lock_root = tmp_path / "locks"
+    with ProjectLock("workspace-id", project_dir, lock_root=lock_root):
         with pytest.raises(ProjectLockedError):
-            with ProjectLock(project_dir):
+            with ProjectLock("workspace-id", other_project_dir, lock_root=lock_root):
                 pass
 
 

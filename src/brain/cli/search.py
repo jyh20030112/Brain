@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 
 from dotenv import load_dotenv
 
+from brain.cli.output import emit_error, emit_json
 from brain.config import Config
 from brain.models import RetrievedChunk
 from brain.project import validate_project_name
 from brain.retrieval import SearchService
+from brain.storage.elasticsearch_store import ProjectNotFoundError, RetrievalFailedError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,27 +43,26 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv()
     try:
-        if not 1 <= args.top_k <= 100:
-            raise ValueError("top-k 必须在 1 到 100 之间")
         cfg = Config.from_env()
         cfg.project = validate_project_name(args.project)
-        results = SearchService.from_config(cfg).search(args.question, top_k=args.top_k)
+        outcome = SearchService.from_config(cfg).search(args.question, top_k=args.top_k)
         payload = {
             "ok": True,
             "question": args.question,
             "project": cfg.project,
             "top_k": args.top_k,
-            "count": len(results),
-            "results": [_result_to_dict(result) for result in results],
+            "count": len(outcome.results),
+            "warnings": outcome.warnings,
+            "results": [_result_to_dict(result) for result in outcome.results],
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        emit_json(payload, indent=2)
         return 0
+    except ProjectNotFoundError as exc:
+        return emit_error("project_not_found", str(exc), project=args.project)
+    except RetrievalFailedError as exc:
+        return emit_error("retrieval_failed", str(exc), project=args.project)
     except Exception as exc:
-        print(
-            json.dumps({"ok": False, "error": {"code": "search_failed", "message": str(exc)}}, ensure_ascii=False),
-            file=sys.stderr,
-        )
-        return 1
+        return emit_error("search_failed", str(exc), project=args.project)
 
 
 if __name__ == "__main__":

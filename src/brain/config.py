@@ -24,6 +24,7 @@ class Config:
     es_username: str = ""
     es_password: str = ""
     es_api_key: str = ""
+    es_index_versions_to_keep: int = 2
 
     # ---- MinerU (PDF OCR，可选) ----
     mineru_api_token: str = ""
@@ -54,6 +55,8 @@ class Config:
             errors.append("EMBEDDING_DIM 必须大于 0")
         if not (self.es_cloud_id or self.es_url):
             errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
+        if self.es_index_versions_to_keep <= 0:
+            errors.append("ES_INDEX_VERSIONS_TO_KEEP 必须大于 0")
         return errors
 
     def validate_for_ingestion(self) -> None:
@@ -90,6 +93,7 @@ class Config:
             es_username=os.getenv("ES_USERNAME", ""),
             es_password=os.getenv("ES_PASSWORD", ""),
             es_api_key=os.getenv("ES_API_KEY", ""),
+            es_index_versions_to_keep=int(os.getenv("ES_INDEX_VERSIONS_TO_KEEP", "2")),
             mineru_api_token=os.getenv("MINERU_API_TOKEN", ""),
             chunk_size=int(os.getenv("CHUNK_SIZE", "512")),
             chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "120")),

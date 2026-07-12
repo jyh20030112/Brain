@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -67,17 +68,27 @@ def sha256_file(path: Path) -> str:
 
 
 class ProjectLock:
-    def __init__(self, project_dir: Path):
-        self.path = project_dir / ".ingest.lock"
-        self._lock = FileLock(str(self.path))
+    """同一主机上按 workspace 加锁，同时保留 project 目录锁文件。"""
+
+    def __init__(self, workspace_id: str, project_dir: Path, *, lock_root: Path | None = None):
+        root = lock_root or Path(tempfile.gettempdir()) / "brain-ingest-locks"
+        self.path = root / f"{workspace_id}.lock"
+        self.project_path = project_dir / ".ingest.lock"
+        self._global_lock = FileLock(str(self.path))
+        self._project_lock = FileLock(str(self.project_path))
 
     def __enter__(self) -> ProjectLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.project_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._lock.acquire(timeout=0)
+            self._global_lock.acquire(timeout=0)
+            self._project_lock.acquire(timeout=0)
         except Timeout as exc:
+            if self._global_lock.is_locked:
+                self._global_lock.release()
             raise ProjectLockedError("该 project 已有入库任务正在运行") from exc
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
-        self._lock.release()
+        self._project_lock.release()
+        self._global_lock.release()

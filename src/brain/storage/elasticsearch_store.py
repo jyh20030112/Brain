@@ -8,7 +8,9 @@ from numbers import Real
 from typing import Any, Callable
 from uuid import uuid4
 
-from brain.models import RetrievedChunk, TextChunk
+from elasticsearch.helpers import async_streaming_bulk
+
+from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
 from brain.storage.client import es_context, response_body, run_async
 
 
@@ -18,10 +20,15 @@ DEFAULT_RRF_K = 60
 @dataclass(slots=True)
 class PublishResult:
     alias: str
-    index_version: str
-    inventory: list[dict[str, Any]]
-    retained_chunks: int
     total_chunks: int
+
+
+class ProjectNotFoundError(RuntimeError):
+    pass
+
+
+class RetrievalFailedError(RuntimeError):
+    pass
 
 
 def _escape_wildcard(value: str) -> str:
@@ -46,6 +53,7 @@ class ESStore:
         es_pass: str = "",
         es_api_key: str = "",
         embedding_dim: int = 1024,
+        index_versions_to_keep: int = 2,
     ):
         self.wid = workspace_id
         self.es_url = es_url
@@ -54,6 +62,7 @@ class ESStore:
         self.es_pass = es_pass
         self.es_api_key = es_api_key
         self.emb_dim = embedding_dim
+        self.index_versions_to_keep = max(1, index_versions_to_keep)
 
     def _docs_mapping(self) -> dict:
         return {
@@ -61,6 +70,7 @@ class ESStore:
                 "id": {"type": "keyword"},
                 "workspace_id": {"type": "keyword"},
                 "file_name": {"type": "keyword"},
+                "file_name_normalized": {"type": "keyword"},
                 "source_path": {"type": "keyword"},
                 "content": {"type": "text", "analyzer": "standard"},
                 "page_number": {"type": "integer"},
@@ -81,21 +91,6 @@ class ESStore:
                 raise ValueError(f"第 {position} 条向量维度为 {len(vector)}，预期 {self.emb_dim}")
             if not all(isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value) for value in vector):
                 raise ValueError(f"第 {position} 条向量包含非有限数值")
-
-    @staticmethod
-    def _raise_on_bulk_errors(response: dict) -> None:
-        body = response_body(response)
-        if not body.get("errors"):
-            return
-        errors = []
-        for item in body.get("items", []):
-            operation = item.get("index", {})
-            if "error" in operation:
-                errors.append(f"{operation.get('_id', '<unknown>')}: {operation['error']}")
-            if len(errors) == 3:
-                break
-        detail = "；".join(errors) or "Elasticsearch bulk 返回 errors=true"
-        raise RuntimeError(f"批量入库失败：{detail}")
 
     async def _inventory(self, es, index: str) -> list[dict[str, Any]]:
         inventory: list[dict[str, Any]] = []
@@ -124,7 +119,7 @@ class ESStore:
                                             },
                                         }
                                     },
-                                    "pages": {"cardinality": {"field": "page_number"}},
+                                    "last_page": {"max": {"field": "page_number"}},
                                 },
                             }
                         },
@@ -138,6 +133,9 @@ class ESStore:
                 source = hits[0].get("_source", {}) if hits else {}
                 metadata = source.get("metadata") or {}
                 file_name = str(source.get("file_name") or bucket.get("key", {}).get("file_name", ""))
+                page_count = metadata.get("document_page_count")
+                if page_count is None:
+                    page_count = bucket.get("last_page", {}).get("value") or 0
                 inventory.append(
                     {
                         "file_name": file_name,
@@ -146,7 +144,7 @@ class ESStore:
                         "title": str(metadata.get("document_title") or ""),
                         "parser": str(metadata.get("parser") or "legacy"),
                         "mineru_artifact": str(metadata.get("mineru_artifact") or "") or None,
-                        "page_count": int(bucket.get("pages", {}).get("value", 0)),
+                        "page_count": int(page_count),
                         "chunk_count": int(bucket.get("doc_count", 0)),
                     }
                 )
@@ -154,6 +152,27 @@ class ESStore:
             if not buckets or not after:
                 break
         return inventory
+
+    async def _cleanup_old_versions(self, es, alias: str, active_index: str) -> None:
+        response = response_body(
+            await es.indices.get(
+                index=f"{alias}_v_*",
+                expand_wildcards="all",
+                allow_no_indices=True,
+                ignore_unavailable=True,
+            )
+        )
+        versions = []
+        for name, details in response.items():
+            creation_date = details.get("settings", {}).get("index", {}).get("creation_date", "0")
+            versions.append((int(creation_date), name))
+        versions.sort(reverse=True)
+        keep = {active_index}
+        other_versions = [name for _, name in versions if name != active_index]
+        keep.update(other_versions[: self.index_versions_to_keep - 1])
+        obsolete = [name for _, name in versions if name not in keep]
+        if obsolete:
+            await es.indices.delete(index=obsolete)
 
     def publish_incremental(
         self,
@@ -181,7 +200,7 @@ class ESStore:
                 staging_index = f"{alias}_v_{uuid4().hex[:12]}"
                 await es.indices.create(index=staging_index, mappings=self._docs_mapping())
                 try:
-                    alias_exists = bool(await es.indices.exists(index=alias))
+                    alias_exists = bool(await es.indices.exists_alias(name=alias))
                     if alias_exists:
                         reindex_response = response_body(
                             await es.reindex(
@@ -202,15 +221,18 @@ class ESStore:
                                 query={
                                     "bool": {
                                         "should": [
-                                            {
-                                                "wildcard": {
-                                                    "file_name": {
-                                                        "value": _escape_wildcard(name),
-                                                        "case_insensitive": True,
+                                            {"terms": {"file_name_normalized": [name.casefold() for name in names]}},
+                                            *[
+                                                {
+                                                    "wildcard": {
+                                                        "file_name": {
+                                                            "value": _escape_wildcard(name),
+                                                            "case_insensitive": True,
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            for name in names
+                                                for name in names
+                                            ],
                                         ],
                                         "minimum_should_match": 1,
                                     }
@@ -224,35 +246,52 @@ class ESStore:
 
                     retained_response = response_body(await es.count(index=staging_index))
                     retained_count = int(retained_response.get("count", 0))
-                    for i in range(0, len(chunks), 50):
-                        batch_c = chunks[i : i + 50]
-                        batch_e = embeddings[i : i + 50]
-                        ops = []
-                        for c, vector in zip(batch_c, batch_e, strict=True):
-                            ops.append({"index": {"_index": staging_index, "_id": c.id}})
-                            ops.append(
-                                {
-                                    "id": c.id,
-                                    "workspace_id": c.workspace_id,
-                                    "file_name": c.file_name,
-                                    "source_path": c.source_path,
-                                    "content": c.content,
-                                    "page_number": c.page_number,
-                                    "section": c.section,
-                                    "chunk_type": c.chunk_type,
-                                    "metadata": c.metadata,
-                                    "embedding": vector,
-                                }
-                            )
-                        if ops:
-                            response = await es.bulk(operations=ops, refresh=False)
-                            self._raise_on_bulk_errors(response)
+                    actions = (
+                        {
+                            "_op_type": "index",
+                            "_index": staging_index,
+                            "_id": c.id,
+                            "_source": {
+                                "id": c.id,
+                                "workspace_id": c.workspace_id,
+                                "file_name": c.file_name,
+                                "file_name_normalized": c.file_name.casefold(),
+                                "source_path": c.source_path,
+                                "content": c.content,
+                                "page_number": c.page_number,
+                                "section": c.section,
+                                "chunk_type": c.chunk_type,
+                                "metadata": c.metadata,
+                                "embedding": vector,
+                            },
+                        }
+                        for c, vector in zip(chunks, embeddings, strict=True)
+                    )
+                    indexed_count = 0
+                    bulk_errors: list[str] = []
+                    async for ok, info in async_streaming_bulk(
+                        es,
+                        actions,
+                        chunk_size=50,
+                        max_retries=3,
+                        initial_backoff=1,
+                        max_backoff=8,
+                        raise_on_error=False,
+                        raise_on_exception=True,
+                    ):
+                        operation = info.get("index", {})
+                        if ok:
+                            indexed_count += 1
                             if progress_callback:
-                                await asyncio.to_thread(
-                                    progress_callback,
-                                    min(i + len(batch_c), len(chunks)),
-                                    len(chunks),
-                                )
+                                if indexed_count % 50 == 0 or indexed_count == len(chunks):
+                                    await asyncio.to_thread(progress_callback, indexed_count, len(chunks))
+                        elif len(bulk_errors) < 3:
+                            bulk_errors.append(
+                                f"{operation.get('_id', '<unknown>')}: "
+                                f"{operation.get('error', 'unknown error')}"
+                            )
+                    if bulk_errors:
+                        raise RuntimeError(f"批量入库失败：{'；'.join(bulk_errors)}")
 
                     await es.indices.refresh(index=staging_index)
                     count_response = await es.count(index=staging_index)
@@ -285,14 +324,13 @@ class ESStore:
                         await asyncio.to_thread(abort_manifest_callback)
                     raise
 
+                try:
+                    await self._cleanup_old_versions(es, alias, staging_index)
+                except Exception as exc:
+                    print(f"  [索引] 清理旧版本失败，将在下次入库重试: {exc}", file=sys.stderr)
+
                 print(f"  [索引] docs: 新写入 {len(chunks)} 条，保留 {retained_count} 条，已发布到 {alias}", file=sys.stderr)
-                return PublishResult(
-                    alias=alias,
-                    index_version=staging_index,
-                    inventory=inventory,
-                    retained_chunks=retained_count,
-                    total_chunks=expected_count,
-                )
+                return PublishResult(alias=alias, total_chunks=expected_count)
 
         return run_async(_run())
 
@@ -313,6 +351,28 @@ class ESStore:
 
         return run_async(_run())
 
+    def active_index_state(self) -> dict[str, Any]:
+        async def _run():
+            async with es_context(
+                url=self.es_url,
+                cloud_id=self.es_cloud_id,
+                api_key=self.es_api_key,
+                username=self.es_user,
+                password=self.es_pass,
+            ) as es:
+                alias = _docs_index(self.wid)
+                if not await es.indices.exists_alias(name=alias):
+                    return {"alias": alias, "indices": [], "chunk_count": 0}
+                aliases = response_body(await es.indices.get_alias(name=alias))
+                count = response_body(await es.count(index=alias))
+                return {
+                    "alias": alias,
+                    "indices": sorted(aliases.keys()),
+                    "chunk_count": int(count.get("count", 0)),
+                }
+
+        return run_async(_run())
+
     def search_docs(
         self,
         query: str,
@@ -321,8 +381,8 @@ class ESStore:
         vector_k: int = 10,
         keyword_k: int = 20,
         rrf_k: int = DEFAULT_RRF_K,
-    ) -> list[RetrievedChunk]:
-        """两路独立召回 + RRF 融合，与原始 QASearchService 逻辑一致。"""
+    ) -> RetrievalOutcome:
+        """两路独立召回 + RRF 融合，并显式返回检索降级信息。"""
 
         async def _run():
             async with es_context(
@@ -333,10 +393,12 @@ class ESStore:
                 password=self.es_pass,
             ) as es:
                 idx = _docs_index(self.wid)
-                if not await es.indices.exists(index=idx):
-                    return []
+                if not await es.indices.exists_alias(name=idx):
+                    raise ProjectNotFoundError(f"project 对应的 Elasticsearch 索引不存在: {idx}")
 
                 vector_hits_raw = []
+                warnings: list[dict[str, str]] = []
+                successful_routes = 0
                 if query_embedding and vector_k > 0:
                     vector_body: dict = {
                         "size": vector_k,
@@ -349,9 +411,10 @@ class ESStore:
                     }
                     try:
                         vr = await es.search(index=idx, body=vector_body)
-                        vector_hits_raw = vr.get("hits", {}).get("hits", [])
+                        vector_hits_raw = response_body(vr).get("hits", {}).get("hits", [])
+                        successful_routes += 1
                     except Exception as e:
-                        print(f"  [ES] 向量召回失败: {e}", file=sys.stderr)
+                        warnings.append({"route": "vector", "code": "vector_retrieval_failed", "message": str(e)})
 
                 keyword_hits_raw = []
                 if keyword_k > 0:
@@ -361,9 +424,14 @@ class ESStore:
                     }
                     try:
                         kr = await es.search(index=idx, body=keyword_body)
-                        keyword_hits_raw = kr.get("hits", {}).get("hits", [])
+                        keyword_hits_raw = response_body(kr).get("hits", {}).get("hits", [])
+                        successful_routes += 1
                     except Exception as e:
-                        print(f"  [ES] 关键词召回失败: {e}", file=sys.stderr)
+                        warnings.append({"route": "keyword", "code": "keyword_retrieval_failed", "message": str(e)})
+
+                if successful_routes == 0:
+                    detail = "；".join(f"{item['route']}: {item['message']}" for item in warnings)
+                    raise RetrievalFailedError(f"所有召回路线均失败：{detail or '没有启用召回路线'}")
 
                 def _hit_to_chunk(hit: dict, method: str, score: float) -> RetrievedChunk:
                     s = hit.get("_source", {})
@@ -418,7 +486,8 @@ class ESStore:
                         route = "elasticsearch_keyword"
                     merged.append((rrf_score, best_hit, route))
 
-                merged.sort(key=lambda x: x[0], reverse=True)
-                return [_hit_to_chunk(h, route, score) for score, h, route in merged[:top_k]]
+                merged.sort(key=lambda item: (-item[0], str(item[1].get("_source", {}).get("id", ""))))
+                results = [_hit_to_chunk(h, route, score) for score, h, route in merged[:top_k]]
+                return RetrievalOutcome(results=results, warnings=warnings)
 
         return run_async(_run())

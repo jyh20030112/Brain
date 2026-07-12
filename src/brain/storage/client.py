@@ -38,7 +38,7 @@ def run_async(coro):
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.new_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
     raise RuntimeError("不能在已有事件循环中同步调用 ES 方法")
 
 
