@@ -1,9 +1,11 @@
 import json
 
+import pytest
+
 from brain.cli import ingest, search, status
-from brain.config import Config
 from brain.models import RetrievedChunk, TextChunk
 from brain.progress.models import IngestionJob
+from brain.project import atomic_write_json
 
 
 def _result() -> RetrievedChunk:
@@ -11,92 +13,130 @@ def _result() -> RetrievedChunk:
         id="chunk_1",
         workspace_id="wid",
         file_name="manual.md",
-        source_path="/docs/manual.md",
-        content="早晚使用。",
+        source_path="manual.md",
+        content="按照说明配置。",
         page_number=2,
-        section="使用方法",
+        section="配置方法",
         chunk_type="paragraph",
     )
     return RetrievedChunk(chunk=chunk, score=0.03, retrieval_method="rrf")
 
 
-def test_search_cli_outputs_machine_readable_json(monkeypatch, capsys):
+def test_ingest_cli_requires_three_arguments_and_outputs_json(monkeypatch, capsys):
+    captured = {}
+
+    def fake_run(cfg):
+        captured["cfg"] = cfg
+        return {"ok": True, "project": cfg.project, "added": 1}
+
+    monkeypatch.setattr(ingest, "run_ingestion", fake_run)
+    result = ingest.main(
+        ["--input-dir", "docs", "--output-dir", "output", "--project", "my-knowledge-base"]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["added"] == 1
+    assert captured["cfg"].input_dir == "docs"
+
+
+def test_search_cli_requires_fixed_flags_and_outputs_json(monkeypatch, capsys):
     class FakeService:
-        def search(self, query, *, top_k):
-            assert (query, top_k) == ("怎么使用？", 3)
+        def search(self, question, *, top_k):
+            assert (question, top_k) == ("如何配置？", 10)
             return [_result()]
 
     monkeypatch.setattr(search.SearchService, "from_config", lambda cfg: FakeService())
-
-    assert search.main(["怎么使用？", "--top-k", "3", "--json"]) == 0
+    assert search.main(
+        ["--question", "如何配置？", "--project", "my-knowledge-base", "--top-k", "10"]
+    ) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["results"][0]["chunk"]["content"] == "早晚使用。"
+    assert payload["project"] == "my-knowledge-base"
+    assert payload["count"] == 1
 
 
-def test_ingest_cli_applies_command_line_overrides(monkeypatch):
-    captured = {}
-    monkeypatch.setattr(ingest, "run_ingestion", lambda cfg: captured.update(cfg=cfg))
-
-    assert ingest.main(["--input-dir", "docs", "--project", "my-knowledge-base"]) == 0
-    assert captured["cfg"].input_dir == "docs"
-    assert captured["cfg"].project == "my-knowledge-base"
+@pytest.mark.parametrize("module", [ingest, search])
+def test_cli_missing_required_arguments_is_rejected(module):
+    with pytest.raises(SystemExit):
+        module.main([])
 
 
-def _job(*, job_status="running", stage="embedding", current=2, total=4):
+def test_status_catalog_lists_projects_and_keeps_invalid_manifest(monkeypatch, tmp_path, capsys):
+    output_dir = tmp_path / "output"
+    valid = output_dir / "alpha"
+    invalid = output_dir / "broken"
+    atomic_write_json(
+        valid / "manifest.json",
+        {
+            "project": "alpha",
+            "description": "包含 1 份资料。",
+            "topics": [],
+            "file_count": 1,
+            "chunk_count": 2,
+            "updated_at": "now",
+            "active_index": "docs_alpha_current",
+            "files": [{"file_name": "a.txt"}],
+        },
+    )
+    invalid.mkdir(parents=True)
+    (invalid / "manifest.json").write_text("{bad", encoding="utf-8")
+
+    assert status.main(["--output-dir", str(output_dir)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["count"] == 2
+    assert payload["projects"][0]["project"] == "alpha"
+    assert "error" in payload["projects"][1]
+
+
+def _job(state="running", stage="embedding", current=1, total=2):
     return IngestionJob(
         job_id="ingest_test",
         workspace_id="wid",
         project="my-knowledge-base",
-        status=job_status,
+        status=state,
         stage=stage,
         current=current,
         total=total,
-        documents_total=2,
-        documents_succeeded=2,
+        documents_total=1,
+        documents_succeeded=1,
         documents_failed=0,
-        chunks_total=4,
-        started_at="2026-07-12T00:00:00+00:00",
-        updated_at="2026-07-12T00:00:01+00:00",
+        chunks_total=2,
+        current_file=None,
+        files_added=1,
+        files_updated=0,
+        files_skipped=0,
+        started_at="2099-01-01T00:00:00+00:00",
+        updated_at="2099-01-01T00:00:01+00:00",
     )
 
 
-def _status_config():
-    return Config(project="my-knowledge-base", es_url="http://fake-es")
+def test_status_project_mode_streams_json_lines_until_terminal(monkeypatch, tmp_path, capsys):
+    class SequenceStore:
+        def __init__(self, project_dir):
+            self.jobs = [_job(), _job("succeeded", "completed", 1, 1)]
 
+        def get_job(self):
+            return self.jobs.pop(0)
 
-def test_status_cli_outputs_latest_job_as_json(monkeypatch, capsys):
-    class FakeProgressStore:
-        def list_jobs(self, *, workspace_id, limit):
-            return [_job(job_status="succeeded", stage="completed", current=1, total=1)]
+    monkeypatch.setattr(status, "FileProgressStore", SequenceStore)
+    monkeypatch.setattr(status.time, "sleep", lambda seconds: None)
 
-    monkeypatch.setattr(status.Config, "from_env", classmethod(lambda cls: _status_config()))
-    monkeypatch.setattr(status, "build_progress_store", lambda cfg: FakeProgressStore())
-
-    assert status.main(["--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["job_id"] == "ingest_test"
-    assert payload["status"] == "succeeded"
-
-
-def test_status_cli_watch_refreshes_until_terminal(monkeypatch, capsys):
-    store = SequenceStatusStore(
-        [
-            _job(),
-            _job(job_status="succeeded", stage="completed", current=1, total=1),
-        ]
-    )
-    monkeypatch.setattr(status.Config, "from_env", classmethod(lambda cls: _status_config()))
-    monkeypatch.setattr(status, "build_progress_store", lambda cfg: store)
-    monkeypatch.setattr(status.time, "sleep", lambda interval: None)
-
-    assert status.main(["--job-id", "ingest_test", "--watch", "--json"]) == 0
+    assert status.main(["--output-dir", str(tmp_path), "--project", "my-knowledge-base"]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert [json.loads(line)["status"] for line in lines] == ["running", "succeeded"]
 
 
-class SequenceStatusStore:
-    def __init__(self, jobs):
-        self.jobs = jobs
+def test_status_project_mode_exits_nonzero_for_stale_job(monkeypatch, tmp_path, capsys):
+    stale = _job()
+    stale.updated_at = "2000-01-01T00:00:00+00:00"
 
-    def get_job(self, job_id):
-        return self.jobs.pop(0)
+    class StaleStore:
+        def __init__(self, project_dir):
+            pass
+
+        def get_job(self):
+            return stale
+
+    monkeypatch.setattr(status, "FileProgressStore", StaleStore)
+
+    assert status.main(["--output-dir", str(tmp_path), "--project", "my-knowledge-base"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "stale"

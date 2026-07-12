@@ -58,6 +58,9 @@ class FakeIndices:
     async def create(self, *, index, mappings):
         self.client.created.append(index)
 
+    async def exists(self, *, index):
+        return bool(self.aliases)
+
     async def refresh(self, *, index):
         self.client.refreshed.append(index)
 
@@ -72,26 +75,41 @@ class FakeIndices:
 
 
 class FakeESClient:
-    def __init__(self, *, aliases, bulk_response):
+    def __init__(self, *, aliases, bulk_response, old_count=1):
         self.created = []
         self.refreshed = []
         self.deleted = []
         self.alias_actions = []
         self.indices = FakeIndices(self, aliases)
         self.bulk_response = bulk_response
+        self.old_count = old_count
+        self.document_count = 0
+        self.delete_queries = []
 
     def options(self, **kwargs):
         return self
 
     async def bulk(self, *, operations, refresh):
         self.operations = operations
+        if not self.bulk_response.get("errors"):
+            self.document_count += len(operations) // 2
         return self.bulk_response
 
     async def count(self, *, index):
-        return {"count": 1}
+        return {"count": self.document_count}
+
+    async def reindex(self, **kwargs):
+        self.document_count = self.old_count
+        return {"failures": []}
+
+    async def delete_by_query(self, **kwargs):
+        self.delete_queries.append(kwargs["query"])
+        deleted = self.document_count
+        self.document_count = 0
+        return {"deleted": deleted, "failures": []}
 
 
-def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
+def test_incremental_publish_replaces_matching_file_and_switches_alias(monkeypatch):
     alias = _docs_index("wid")
     client = FakeESClient(aliases={"docs_wid_current_v_old": {"aliases": {alias: {}}}}, bulk_response={"errors": False})
 
@@ -100,16 +118,25 @@ def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
         yield client
 
     monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
+    store = ESStore("wid", embedding_dim=2)
+
+    async def fake_inventory(es, index):
+        return [{"file_name": "source.md", "chunk_count": 1}]
+
+    monkeypatch.setattr(store, "_inventory", fake_inventory)
     progress = []
     publishing = []
-    published = ESStore("wid", embedding_dim=2).index_docs(
+    prepared = []
+    published = store.publish_incremental(
         [_chunk()],
         [[0.1, 0.2]],
+        replace_file_names=["source.md"],
         progress_callback=lambda current, total: progress.append((current, total)),
         publishing_callback=lambda: publishing.append(True),
+        prepare_manifest_callback=lambda inventory, alias, version: prepared.append((inventory, alias, version)),
     )
 
-    assert published == alias
+    assert published.alias == alias
     staging = client.created[0]
     assert staging.startswith(f"{alias}_v_")
     assert client.refreshed == [staging]
@@ -120,9 +147,11 @@ def test_index_docs_publishes_only_after_staging_is_complete(monkeypatch):
     assert client.deleted == []
     assert progress == [(1, 1)]
     assert publishing == [True]
+    assert prepared[0][0][0]["file_name"] == "source.md"
+    assert client.delete_queries[0]["bool"]["should"][0]["wildcard"]["file_name"]["case_insensitive"] is True
 
 
-def test_index_docs_keeps_current_alias_when_bulk_write_fails(monkeypatch):
+def test_incremental_publish_keeps_current_alias_when_bulk_write_fails(monkeypatch):
     client = FakeESClient(
         aliases={"docs_wid_current_v_old": {"aliases": {_docs_index("wid"): {}}}},
         bulk_response={"errors": True, "items": [{"index": {"_id": "chunk_1", "error": "bad vector"}}]},
@@ -135,7 +164,11 @@ def test_index_docs_keeps_current_alias_when_bulk_write_fails(monkeypatch):
     monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
 
     with pytest.raises(RuntimeError, match="批量入库失败"):
-        ESStore("wid", embedding_dim=2).index_docs([_chunk()], [[0.1, 0.2]])
+        ESStore("wid", embedding_dim=2).publish_incremental(
+            [_chunk()],
+            [[0.1, 0.2]],
+            replace_file_names=["source.md"],
+        )
 
     assert client.alias_actions == []
     assert client.deleted == client.created

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from brain.config import Config
 from brain.embeddings import EmbeddingClient
-from brain.progress.elasticsearch_store import ElasticsearchProgressStore
 from brain.storage.elasticsearch_store import ESStore
 
 
@@ -24,14 +23,4 @@ def build_es_store(cfg: Config) -> ESStore:
         es_pass=cfg.es_password,
         es_api_key=cfg.es_api_key,
         embedding_dim=cfg.embedding_dim,
-    )
-
-
-def build_progress_store(cfg: Config) -> ElasticsearchProgressStore:
-    return ElasticsearchProgressStore(
-        es_url=cfg.es_url,
-        es_cloud_id=cfg.es_cloud_id,
-        es_user=cfg.es_username,
-        es_pass=cfg.es_password,
-        es_api_key=cfg.es_api_key,
     )

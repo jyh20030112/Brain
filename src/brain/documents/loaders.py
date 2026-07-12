@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -110,27 +112,38 @@ def load_docs(
     *,
     mineru_api_token: str = "",
     output_dir: Path | None = None,
-    progress_callback: Callable[[int, int], None] | None = None,
+    source_root: Path | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> list[DocumentRecord]:
     documents: list[DocumentRecord] = []
     mineru_ok, mineru_msg = _mineru_available(mineru_api_token)
     if mineru_api_token and not mineru_ok:
-        print(f"  [警告] MinerU 不可用: {mineru_msg}，PDF 将使用 pypdf")
+        print(f"  [警告] MinerU 不可用: {mineru_msg}，PDF 将使用 pypdf", file=sys.stderr)
 
     total = len(file_paths)
     for position, fp in enumerate(file_paths, start=1):
+        if progress_callback:
+            progress_callback(position - 1, total, fp.name)
         ext = fp.suffix.lower()
+        parser = ext.lstrip(".")
+        mineru_artifact = ""
         if ext == ".pdf":
             if mineru_ok:
                 try:
-                    out = (output_dir or Path(".")) / f"mineru_{_short_hash(fp.name)}"
+                    safe_stem = re.sub(r"[^\w.-]+", "_", fp.stem, flags=re.UNICODE).strip("._") or "document"
+                    artifact_rel = Path("mineru") / f"{safe_stem}_{_short_hash(fp.name.casefold())}" / "mineru_result.md"
+                    out = (output_dir or Path(".")) / artifact_rel.parent
                     pages = _load_pdf_mineru(fp, mineru_api_token, out)
-                    print(f"  [MinerU] {fp.name}: {len(pages)} 页")
+                    parser = "mineru"
+                    mineru_artifact = artifact_rel.as_posix()
+                    print(f"  [MinerU] {fp.name}: {len(pages)} 页", file=sys.stderr)
                 except Exception as e:
-                    print(f"  [MinerU] {fp.name} 失败，回退 pypdf: {e}")
+                    print(f"  [MinerU] {fp.name} 失败，回退 pypdf: {e}", file=sys.stderr)
                     pages = _load_pdf_pypdf(fp)
+                    parser = "pypdf"
             else:
                 pages = _load_pdf_pypdf(fp)
+                parser = "pypdf"
         elif ext == ".docx":
             pages = _load_docx(fp)
         elif ext in {".txt", ".text", ".md"}:
@@ -142,16 +155,21 @@ def load_docs(
         else:
             continue
         title = _guess_title(pages, fp.stem)
+        source_path = str(fp.relative_to(source_root)) if source_root else str(fp)
         documents.append(
             DocumentRecord(
-                source_path=str(fp),
+                source_path=source_path,
                 file_name=fp.name,
                 file_type=ext.lstrip("."),
                 title=title,
                 pages=pages,
-                metadata={"extension": ext.lstrip(".")},
+                metadata={
+                    "extension": ext.lstrip("."),
+                    "parser": parser,
+                    "mineru_artifact": mineru_artifact,
+                },
             )
         )
         if progress_callback:
-            progress_callback(position, total)
+            progress_callback(position, total, fp.name)
     return documents

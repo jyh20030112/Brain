@@ -70,15 +70,6 @@ class Config:
         if errors:
             raise ValueError("配置校验失败：" + "；".join(errors))
 
-    def validate_for_status(self) -> None:
-        errors: list[str] = []
-        if not self.project.strip():
-            errors.append("PROJECT 不能为空")
-        if not (self.es_cloud_id or self.es_url):
-            errors.append("必须配置 ES_CLOUD_ID 或 ES_URL")
-        if errors:
-            raise ValueError("配置校验失败：" + "；".join(errors))
-
     @classmethod
     def from_env(cls) -> Config:
         """从环境变量加载配置（.env 文件需提前 load_dotenv）。"""

@@ -1,33 +1,43 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 
 from dotenv import load_dotenv
 
 from brain.config import Config
 from brain.ingestion import run_ingestion
+from brain.project import ProjectLockedError, validate_project_name
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain-ingest", description="解析原始资料并写入知识库")
-    parser.add_argument("--input-dir", help="待入库资料目录；默认读取 INPUT_DIR")
-    parser.add_argument("--output-dir", help="MinerU 中间产物目录；默认读取 OUTPUT_DIR")
-    parser.add_argument("--project", help="知识库项目名；默认读取 PROJECT")
+    parser = argparse.ArgumentParser(prog="brain-ingest", description="增量解析原始资料并写入知识库")
+    parser.add_argument("--input-dir", required=True, help="本次新增或更新的资料目录")
+    parser.add_argument("--output-dir", required=True, help="project 清单、进度和 MinerU 产物根目录")
+    parser.add_argument("--project", required=True, help="知识库 project 名")
     return parser
+
+
+def _error(code: str, message: str) -> int:
+    print(json.dumps({"ok": False, "error": {"code": code, "message": message}}, ensure_ascii=False), file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv()
-    cfg = Config.from_env()
-    if args.input_dir:
+    try:
+        cfg = Config.from_env()
         cfg.input_dir = args.input_dir
-    if args.output_dir:
         cfg.output_dir = args.output_dir
-    if args.project:
-        cfg.project = args.project
-    run_ingestion(cfg)
-    return 0
+        cfg.project = validate_project_name(args.project)
+        print(json.dumps(run_ingestion(cfg), ensure_ascii=False, indent=2))
+        return 0
+    except ProjectLockedError as exc:
+        return _error("project_locked", str(exc))
+    except Exception as exc:
+        return _error("ingestion_failed", str(exc))
 
 
 if __name__ == "__main__":

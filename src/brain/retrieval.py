@@ -23,7 +23,14 @@ class SearchService:
         query = query.strip()
         if not query:
             raise ValueError("查询内容不能为空")
-        if top_k <= 0:
-            raise ValueError("top_k 必须大于 0")
+        if not 1 <= top_k <= 100:
+            raise ValueError("top_k 必须在 1 到 100 之间")
         query_embedding = self.embedding_client.embed([query])[0]
-        return self.store.search_docs(query, query_embedding, top_k=top_k)
+        candidate_k = max(2 * top_k, 20)
+        return self.store.search_docs(
+            query,
+            query_embedding,
+            top_k=top_k,
+            vector_k=candidate_k,
+            keyword_k=candidate_k,
+        )

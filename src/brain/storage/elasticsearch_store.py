@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+from dataclasses import dataclass
 from numbers import Real
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from brain.models import RetrievedChunk, TextChunk
@@ -12,6 +13,19 @@ from brain.storage.client import es_context, response_body, run_async
 
 
 DEFAULT_RRF_K = 60
+
+
+@dataclass(slots=True)
+class PublishResult:
+    alias: str
+    index_version: str
+    inventory: list[dict[str, Any]]
+    retained_chunks: int
+    total_chunks: int
+
+
+def _escape_wildcard(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
 
 
 def _docs_index(workspace_id: str) -> str:
@@ -46,8 +60,8 @@ class ESStore:
             "properties": {
                 "id": {"type": "keyword"},
                 "workspace_id": {"type": "keyword"},
-                "file_name": {"type": "text"},
-                "source_path": {"type": "text"},
+                "file_name": {"type": "keyword"},
+                "source_path": {"type": "keyword"},
                 "content": {"type": "text", "analyzer": "standard"},
                 "page_number": {"type": "integer"},
                 "section": {"type": "text"},
@@ -83,15 +97,76 @@ class ESStore:
         detail = "；".join(errors) or "Elasticsearch bulk 返回 errors=true"
         raise RuntimeError(f"批量入库失败：{detail}")
 
-    def index_docs(
+    async def _inventory(self, es, index: str) -> list[dict[str, Any]]:
+        inventory: list[dict[str, Any]] = []
+        after: dict | None = None
+        while True:
+            composite: dict[str, Any] = {
+                "size": 500,
+                "sources": [{"file_name": {"terms": {"field": "file_name"}}}],
+            }
+            if after:
+                composite["after"] = after
+            response = response_body(
+                await es.search(
+                    index=index,
+                    body={
+                        "size": 0,
+                        "aggs": {
+                            "files": {
+                                "composite": composite,
+                                "aggs": {
+                                    "sample": {
+                                        "top_hits": {
+                                            "size": 1,
+                                            "_source": {
+                                                "includes": ["file_name", "source_path", "page_number", "metadata"]
+                                            },
+                                        }
+                                    },
+                                    "pages": {"cardinality": {"field": "page_number"}},
+                                },
+                            }
+                        },
+                    },
+                )
+            )
+            files = response.get("aggregations", {}).get("files", {})
+            buckets = files.get("buckets", [])
+            for bucket in buckets:
+                hits = bucket.get("sample", {}).get("hits", {}).get("hits", [])
+                source = hits[0].get("_source", {}) if hits else {}
+                metadata = source.get("metadata") or {}
+                file_name = str(source.get("file_name") or bucket.get("key", {}).get("file_name", ""))
+                inventory.append(
+                    {
+                        "file_name": file_name,
+                        "source_path": str(source.get("source_path") or file_name),
+                        "file_type": str(metadata.get("extension") or "unknown"),
+                        "title": str(metadata.get("document_title") or ""),
+                        "parser": str(metadata.get("parser") or "legacy"),
+                        "mineru_artifact": str(metadata.get("mineru_artifact") or "") or None,
+                        "page_count": int(bucket.get("pages", {}).get("value", 0)),
+                        "chunk_count": int(bucket.get("doc_count", 0)),
+                    }
+                )
+            after = files.get("after_key")
+            if not buckets or not after:
+                break
+        return inventory
+
+    def publish_incremental(
         self,
         chunks: list[TextChunk],
         embeddings: list[list[float]],
         *,
+        replace_file_names: list[str],
         progress_callback: Callable[[int, int], None] | None = None,
         publishing_callback: Callable[[], None] | None = None,
-    ) -> str:
-        """写入新版本索引；全部成功并校验数量后，原子切换查询别名。"""
+        prepare_manifest_callback: Callable[[list[dict[str, Any]], str, str], None] | None = None,
+        abort_manifest_callback: Callable[[], None] | None = None,
+    ) -> PublishResult:
+        """复制当前索引、替换同名文件并原子发布新版本。"""
         self._validate_embeddings(chunks, embeddings)
 
         async def _run():
@@ -106,6 +181,49 @@ class ESStore:
                 staging_index = f"{alias}_v_{uuid4().hex[:12]}"
                 await es.indices.create(index=staging_index, mappings=self._docs_mapping())
                 try:
+                    alias_exists = bool(await es.indices.exists(index=alias))
+                    if alias_exists:
+                        reindex_response = response_body(
+                            await es.reindex(
+                                source={"index": alias},
+                                dest={"index": staging_index},
+                                wait_for_completion=True,
+                                refresh=True,
+                            )
+                        )
+                        if reindex_response.get("failures"):
+                            raise RuntimeError(f"复制当前索引失败: {reindex_response['failures'][:3]}")
+
+                    for start in range(0, len(replace_file_names), 500):
+                        names = replace_file_names[start : start + 500]
+                        delete_response = response_body(
+                            await es.delete_by_query(
+                                index=staging_index,
+                                query={
+                                    "bool": {
+                                        "should": [
+                                            {
+                                                "wildcard": {
+                                                    "file_name": {
+                                                        "value": _escape_wildcard(name),
+                                                        "case_insensitive": True,
+                                                    }
+                                                }
+                                            }
+                                            for name in names
+                                        ],
+                                        "minimum_should_match": 1,
+                                    }
+                                },
+                                conflicts="proceed",
+                                refresh=True,
+                            )
+                        )
+                        if delete_response.get("failures"):
+                            raise RuntimeError(f"删除旧文件 chunks 失败: {delete_response['failures'][:3]}")
+
+                    retained_response = response_body(await es.count(index=staging_index))
+                    retained_count = int(retained_response.get("count", 0))
                     for i in range(0, len(chunks), 50):
                         batch_c = chunks[i : i + 50]
                         batch_e = embeddings[i : i + 50]
@@ -139,23 +257,59 @@ class ESStore:
                     await es.indices.refresh(index=staging_index)
                     count_response = await es.count(index=staging_index)
                     indexed = response_body(count_response)
-                    if int(indexed.get("count", -1)) != len(chunks):
-                        raise RuntimeError(f"索引计数校验失败：实际 {indexed.get('count')}，预期 {len(chunks)}")
+                    expected_count = retained_count + len(chunks)
+                    if int(indexed.get("count", -1)) != expected_count:
+                        raise RuntimeError(f"索引计数校验失败：实际 {indexed.get('count')}，预期 {expected_count}")
 
                     if publishing_callback:
                         await asyncio.to_thread(publishing_callback)
-                    existing = await es.options(ignore_status=404).indices.get_alias(name=alias)
-                    existing_body = response_body(existing)
-                    previous_indices = sorted(existing_body.keys()) if hasattr(existing_body, "keys") else []
+                    inventory = await self._inventory(es, staging_index)
+                    if prepare_manifest_callback:
+                        await asyncio.to_thread(
+                            prepare_manifest_callback,
+                            inventory,
+                            alias,
+                            staging_index,
+                        )
+                    previous_indices = []
+                    if alias_exists:
+                        existing = await es.indices.get_alias(name=alias)
+                        existing_body = response_body(existing)
+                        previous_indices = sorted(existing_body.keys())
                     actions = [{"remove": {"index": index, "alias": alias}} for index in previous_indices]
                     actions.append({"add": {"index": staging_index, "alias": alias}})
                     await es.indices.update_aliases(actions=actions)
                 except Exception:
                     await es.options(ignore_status=404).indices.delete(index=staging_index)
+                    if abort_manifest_callback:
+                        await asyncio.to_thread(abort_manifest_callback)
                     raise
 
-                print(f"  [索引] docs: {len(chunks)} 条写入完成，已发布到 {alias}")
-                return alias
+                print(f"  [索引] docs: 新写入 {len(chunks)} 条，保留 {retained_count} 条，已发布到 {alias}", file=sys.stderr)
+                return PublishResult(
+                    alias=alias,
+                    index_version=staging_index,
+                    inventory=inventory,
+                    retained_chunks=retained_count,
+                    total_chunks=expected_count,
+                )
+
+        return run_async(_run())
+
+    def alias_indices(self) -> list[str]:
+        async def _run():
+            async with es_context(
+                url=self.es_url,
+                cloud_id=self.es_cloud_id,
+                api_key=self.es_api_key,
+                username=self.es_user,
+                password=self.es_pass,
+            ) as es:
+                alias = _docs_index(self.wid)
+                if not await es.indices.exists_alias(name=alias):
+                    return []
+                response = response_body(await es.indices.get_alias(name=alias))
+                return sorted(response.keys()) if hasattr(response, "keys") else []
 
         return run_async(_run())
 

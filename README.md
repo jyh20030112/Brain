@@ -1,47 +1,67 @@
 # Brain
 
-知识库原始资料入库、检索与进度监控工具。三个 CLI 共享配置和基础设施，但业务入口彼此独立。
+[简体中文](README_zh-CN.md) | English
 
-## 目录结构
+Brain is an MCP-oriented toolkit for incremental knowledge-base ingestion, hybrid retrieval, and ingestion status inspection. It exposes three CLIs with four fixed functions. Successful command output is JSON, while live progress is emitted as JSON Lines.
+
+## Project Structure
 
 ```text
-.
-├── pyproject.toml
+Brain/
+├── README.md                         # English documentation
+├── README_zh-CN.md                   # Simplified Chinese documentation
+├── pyproject.toml                    # Package metadata, dependencies, CLI entries
+├── uv.lock                           # Locked dependency versions
 ├── src/
 │   └── brain/
+│       ├── __init__.py
 │       ├── cli/
-│       │   ├── ingest.py              # brain-ingest 入口
-│       │   ├── search.py              # brain-search 入口
-│       │   └── status.py              # brain-status 入口
+│       │   ├── __init__.py
+│       │   ├── ingest.py             # brain-ingest
+│       │   ├── search.py             # brain-search
+│       │   └── status.py             # brain-status
 │       ├── documents/
-│       │   ├── loaders.py             # 文件与 MinerU 解析
-│       │   ├── cleaning.py            # 文本清洗
-│       │   └── chunking.py            # 切片
-│       ├── storage/
-│       │   ├── client.py              # ES 连接与同步桥接
-│       │   └── elasticsearch_store.py # ES 发布与检索
+│       │   ├── __init__.py
+│       │   ├── loaders.py            # File loading and MinerU parsing
+│       │   ├── cleaning.py           # Text normalization and cleaning
+│       │   └── chunking.py           # Token-budget-aware chunking
 │       ├── progress/
-│       │   ├── models.py              # 入库任务模型
-│       │   ├── store.py               # 进度存储接口
-│       │   └── elasticsearch_store.py # 进度持久化
-│       ├── config.py                  # 环境配置
-│       ├── embeddings.py              # Embedding 客户端
-│       ├── ingestion.py               # 入库业务流程
-│       ├── retrieval.py               # 检索业务服务
-│       ├── runtime.py                 # 共享依赖构造
-│       └── models.py                  # 数据模型
+│       │   ├── __init__.py
+│       │   ├── file_store.py         # Atomic progress.json storage and heartbeat
+│       │   └── models.py             # Ingestion job model
+│       ├── storage/
+│       │   ├── __init__.py
+│       │   ├── client.py             # Elasticsearch connection helpers
+│       │   └── elasticsearch_store.py # Incremental publishing and retrieval
+│       ├── config.py                 # Environment-based service configuration
+│       ├── constants.py              # Supported file extensions
+│       ├── embeddings.py             # OpenAI-compatible and Ollama embeddings
+│       ├── ingestion.py              # Incremental ingestion orchestration
+│       ├── manifest.py               # Project manifest generation and recovery
+│       ├── models.py                 # Documents, chunks, and retrieval models
+│       ├── project.py                # Project validation, locking, atomic JSON
+│       ├── retrieval.py              # Hybrid retrieval service
+│       ├── runtime.py                # Runtime dependency construction
+│       └── utils.py                  # Shared utility functions
 └── tests/
+    ├── test_chunking.py
+    ├── test_cleaning.py
+    ├── test_cli.py
+    ├── test_elasticsearch_store.py
+    ├── test_ingestion.py
+    ├── test_loaders.py
+    ├── test_manifest.py
+    ├── test_models.py
+    ├── test_progress_store.py
+    ├── test_project.py
+    └── test_retrieval.py
 ```
 
-## 配置
+## Configuration
 
-在项目根目录创建 `.env`：
+Service connections and processing settings are loaded from `.env`:
 
 ```dotenv
-PROJECT=my-knowledge-base
-INPUT_DIR=./docs
-OUTPUT_DIR=./mvp_output
-
 EMBEDDING_PROVIDER=openai
 EMBEDDING_URL=https://your-embedding-api/v1
 EMBEDDING_API_KEY=your-key
@@ -58,73 +78,97 @@ CHUNK_SIZE=512
 CHUNK_OVERLAP=120
 ```
 
-`EMBEDDING_PROVIDER=ollama` 时，未配置 `EMBEDDING_URL` 会默认使用 `http://localhost:11434`。
+`input-dir`, `output-dir`, and `project` are never filled from environment variables. They must be passed explicitly to the relevant CLI.
 
-## 入库 CLI
-
-```bash
-uv run brain-ingest
-```
-
-也可以覆盖本次运行的输入目录和项目名：
+## Function 1: Incremental Ingestion
 
 ```bash
-uv run brain-ingest --input-dir ./docs --project my-knowledge-base
+uv run brain-ingest \
+  --input-dir ./docs \
+  --output-dir ./mvp_output \
+  --project my-knowledge-base
 ```
 
-入库流程只处理原始资料：加载与 MinerU 解析、清洗、切片、向量化、ES 原子发布。查询别名为 `docs_<workspace_id>_current`。
+All three arguments are required. File identity is the case-insensitive basename:
 
-## 检索 CLI
+- New filenames are appended to the project.
+- Existing filenames replace all old chunks for that file.
+- Unchanged files are skipped by SHA-256.
+- Existing files absent from the current input remain in the project.
+- Duplicate basenames in one input batch fail the entire ingestion.
+- Only one ingestion may run for the same project directory at a time.
 
-人类可读输出：
+Documents are published through a staging index and an atomic Elasticsearch alias switch. Standard output contains only the final JSON result; operational logs go to standard error.
+
+Project artifacts are stored as follows:
+
+```text
+mvp_output/
+└── my-knowledge-base/
+    ├── manifest.json                 # Current project inventory
+    ├── progress.json                 # Current or latest ingestion status
+    ├── .ingest.lock                  # Per-project ingestion lock
+    └── mineru/
+        └── guide_<hash>/
+            └── mineru_result.md      # MinerU intermediate Markdown
+```
+
+`manifest.json` describes the current Elasticsearch alias contents, including a deterministic project description, topics, file hashes, parser names, page counts, and chunk counts. No LLM is used to generate this description.
+
+## Function 2: List All Projects
 
 ```bash
-uv run brain-search "如何配置访问权限？" --top-k 5
+uv run brain-status --output-dir ./mvp_output
 ```
 
-JSON 输出，适合被其他程序调用：
+This scans every valid `manifest.json` below the output directory and returns project descriptions and complete file inventories as JSON. A malformed manifest is returned as an error entry without blocking other projects.
+
+## Function 3: Monitor Ingestion Progress
 
 ```bash
-uv run brain-search "如何配置访问权限？" --top-k 5 --json
+uv run brain-status \
+  --output-dir ./mvp_output \
+  --project my-knowledge-base
 ```
 
-检索 CLI 使用与入库相同的 `PROJECT`、Embedding 模型和维度，通过向量召回与关键词召回进行 RRF 融合。可用 `--project` 查询其他项目：
+While ingestion is running, this command reads `progress.json` once per second and emits a JSON Line only when the state changes. It exits when the task succeeds, fails, or becomes stale after 30 seconds without a heartbeat.
+
+Stages:
+
+```text
+recovering → scanning → parsing → cleaning → chunking
+→ embedding → indexing → publishing → completed
+```
+
+## Function 4: Hybrid Retrieval
 
 ```bash
-uv run brain-search "注意事项" --project another-knowledge-base --json
+uv run brain-search \
+  --question "How do I configure access permissions?" \
+  --project my-knowledge-base \
+  --top-k 10
 ```
 
-## 入库进度 CLI
+All three arguments are required, and output is always JSON. Retrieval combines vector and keyword candidates with Reciprocal Rank Fusion (RRF):
 
-查看当前项目最新任务：
+- `top-k` is the final result count and must be between 1 and 100.
+- Each route retrieves `max(2 × top-k, 20)` candidates.
+- Results include the filename, source path, page, section, original text, retrieval method, and RRF score.
+- The command retrieves original chunks only; it does not generate an LLM answer.
 
-```bash
-uv run brain-status --project my-knowledge-base
+## Supported Files
+
+```text
+PDF, DOCX, TXT, TEXT, Markdown, CSV, XLSX
 ```
 
-查看指定任务，或持续监控到任务结束：
+When configured, MinerU is preferred for PDF parsing; failures fall back to pypdf. MinerU Markdown is stored under the corresponding project's `mineru/` directory.
 
-```bash
-uv run brain-status --job-id ingest_20260712_120000_a8f3c9d1
-uv run brain-status --job-id ingest_20260712_120000_a8f3c9d1 --watch --interval 2
-```
+## Upgrade Notes
 
-查看历史记录：
+An existing `docs_<workspace>_current` alias is copied into the new staging version during the first incremental run. The old Elasticsearch progress index is no longer used, and legacy `mvp_output/mineru_*` directories are not moved automatically.
 
-```bash
-uv run brain-status --project my-knowledge-base --history 10
-```
-
-输出 JSON；与 `--watch` 一起使用时输出 JSON Lines：
-
-```bash
-uv run brain-status --job-id ingest_20260712_120000_a8f3c9d1 --json
-uv run brain-status --job-id ingest_20260712_120000_a8f3c9d1 --watch --json
-```
-
-进度保存在独立索引 `brain_ingestion_jobs`，不会进入知识检索，也不会随文档索引发布而被覆盖。运行 `brain-ingest` 时会首先打印本次任务的 `job_id`。
-
-## 测试
+## Tests
 
 ```bash
 uv run pytest -q

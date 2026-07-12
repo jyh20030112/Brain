@@ -98,7 +98,7 @@ def _build_chunk(
         page_number=page_number,
         section=section[:120],
         chunk_type=ct,
-        metadata={"document_title": doc.title},
+        metadata={**doc.metadata, "document_title": doc.title},
     )
 
 

@@ -11,10 +11,12 @@ class FakeEmbeddingClient:
 
 
 class FakeStore:
-    def search_docs(self, query, query_embedding, top_k):
+    def search_docs(self, query, query_embedding, top_k, vector_k, keyword_k):
         assert query == "怎么使用？"
         assert query_embedding == [0.1, 0.2]
         assert top_k == 3
+        assert vector_k == 20
+        assert keyword_k == 20
         chunk = TextChunk(
             id="chunk_1",
             workspace_id="wid",
@@ -34,7 +36,7 @@ def test_search_service_embeds_and_retrieves_query():
     assert results[0].chunk.content == "早晚使用。"
 
 
-@pytest.mark.parametrize("query, top_k", [("", 5), ("问题", 0)])
+@pytest.mark.parametrize("query, top_k", [("", 5), ("问题", 0), ("问题", 101)])
 def test_search_service_validates_input(query, top_k):
     with pytest.raises(ValueError):
         SearchService(FakeEmbeddingClient(), FakeStore()).search(query, top_k=top_k)
