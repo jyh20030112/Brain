@@ -1,4 +1,4 @@
-"""基于 FastMCP 暴露 Brain CLI 的 MCP 工具。"""
+"""基于 FastMCP 暴露 SimBrain CLI 的 MCP 工具。"""
 
 from __future__ import annotations
 
@@ -10,18 +10,18 @@ from typing import Any
 from dotenv import load_dotenv
 from fastmcp import Context, FastMCP
 
-from brain.cli.search import _result_to_dict
-from brain.cli.status import _catalog, _job_payload
-from brain.config import Config
-from brain.ingestion import run_ingestion
-from brain.progress.file_store import FileProgressStore
-from brain.project import ProjectLockedError, get_project_dir, validate_project_name
-from brain.retrieval import SearchService
-from brain.storage.elasticsearch_store import ProjectNotFoundError, RetrievalFailedError
+from simbrain.cli.search import _result_to_dict
+from simbrain.cli.status import _catalog, _job_payload
+from simbrain.config import Config
+from simbrain.ingestion import run_ingestion
+from simbrain.progress.file_store import FileProgressStore
+from simbrain.project import ProjectLockedError, get_project_dir, validate_project_name
+from simbrain.retrieval import SearchService
+from simbrain.storage.elasticsearch_store import ProjectNotFoundError, RetrievalFailedError
 
 
 mcp = FastMCP(
-    name="Brain",
+    name="SimBrain",
     instructions="用于知识库的增量入库、项目查询、实时进度查看与混合检索。",
 )
 
@@ -39,12 +39,12 @@ def _load_config() -> Config:
 
 
 @mcp.tool(
-    name="brain-ingest",
+    name="simbrain-ingest",
     description="增量解析目录中的资料并发布到指定知识库 project。",
     annotations={"destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
 )
-def brain_ingest(input_dir: str, output_dir: str, project: str) -> dict[str, Any]:
-    """增量解析资料并写入指定知识库。
+def simbrain_ingest(input_dir: str, output_dir: str, project: str) -> dict[str, Any]:
+    """增量解析资料并写入指定 SimBrain 知识库。
 
     Args:
         input_dir: 本次需要新增或更新的原始资料目录。
@@ -64,11 +64,11 @@ def brain_ingest(input_dir: str, output_dir: str, project: str) -> dict[str, Any
 
 
 @mcp.tool(
-    name="brain-status",
+    name="simbrain-status",
     description="列出输出目录下全部知识库 project 及其完整资料清单。",
     annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
 )
-def brain_status(output_dir: str) -> dict[str, Any]:
+def simbrain_status(output_dir: str) -> dict[str, Any]:
     """列出输出目录下所有知识库 project 的完整清单。
 
     Args:
@@ -81,11 +81,11 @@ def brain_status(output_dir: str) -> dict[str, Any]:
 
 
 @mcp.tool(
-    name="brain-status-realtime",
+    name="simbrain-status-realtime",
     description="实时监控指定 project 的入库进度，并通过 MCP 进度与日志通知推送变化。",
     annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
 )
-async def brain_status_realtime(output_dir: str, project: str, ctx: Context) -> dict[str, Any]:
+async def simbrain_status_realtime(output_dir: str, project: str, ctx: Context) -> dict[str, Any]:
     """持续监控入库任务，直到结束或超过心跳时限。
 
     Args:
@@ -128,11 +128,11 @@ async def brain_status_realtime(output_dir: str, project: str, ctx: Context) -> 
 
 
 @mcp.tool(
-    name="brain-search",
+    name="simbrain-search",
     description="在指定 project 中执行向量与关键词融合检索，返回原始知识块。",
     annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
 )
-def brain_search(question: str, project: str, top_k: int) -> dict[str, Any]:
+def simbrain_search(question: str, project: str, top_k: int) -> dict[str, Any]:
     """在指定知识库中执行向量与关键词融合检索。
 
     Args:

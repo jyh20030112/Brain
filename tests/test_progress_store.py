@@ -1,6 +1,6 @@
 import time
 
-from brain.progress.file_store import FileProgressStore
+from simbrain.progress.file_store import FileProgressStore
 
 
 def test_file_progress_store_creates_updates_and_completes_job(tmp_path):

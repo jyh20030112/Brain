@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from brain.config import Config
-from brain.embeddings import EmbeddingClient
-from brain.storage.elasticsearch_store import ESStore
+from simbrain.config import Config
+from simbrain.embeddings import EmbeddingClient
+from simbrain.storage.elasticsearch_store import ESStore
 
 
 def build_embedding_client(cfg: Config) -> EmbeddingClient:

@@ -1,7 +1,7 @@
 [project]
-name = "brain"
+name = "simbrain"
 version = "0.1.0"
-description = "Document ingestion and retrieval CLI for a knowledge base"
+description = "SimBrain document ingestion and retrieval CLI for a knowledge base"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -18,17 +18,17 @@ dependencies = [
 ]
 
 [project.scripts]
-brain-ingest = "brain.cli.ingest:main"
-brain-search = "brain.cli.search:main"
-brain-status = "brain.cli.status:main"
-brain-mcp = "brain.serve.__main__:main"
+simbrain-ingest = "simbrain.cli.ingest:main"
+simbrain-search = "simbrain.cli.search:main"
+simbrain-status = "simbrain.cli.status:main"
+simbrain-mcp = "simbrain.serve.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/brain"]
+packages = ["src/simbrain"]
 
 [dependency-groups]
 dev = [
@@ -38,4 +38,4 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = ["integration: requires a live Elasticsearch configured through BRAIN_TEST_ES_URL"]
+markers = ["integration: requires a live Elasticsearch configured through SIMBRAIN_TEST_ES_URL"]

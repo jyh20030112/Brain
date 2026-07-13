@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 
-from brain.models import DocumentRecord, TextChunk
-from brain.utils import _short_hash
+from simbrain.models import DocumentRecord, TextChunk
+from simbrain.utils import _short_hash
 
 
 _HEADING_PATTERN = re.compile(r"^[一二三四五六七八九十\d]+[、.)）]?\s*|^第\s*\d+\s*[步章节项]")

@@ -10,8 +10,8 @@ from uuid import uuid4
 
 from elasticsearch.helpers import async_streaming_bulk
 
-from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
-from brain.storage.client import es_context, response_body, run_async
+from simbrain.models import RetrievalOutcome, RetrievedChunk, TextChunk
+from simbrain.storage.client import es_context, response_body, run_async
 
 
 DEFAULT_RRF_K = 60

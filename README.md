@@ -1,28 +1,28 @@
-# Brain
+# SimBrain
 
 [简体中文](README_zh-CN.md) | English
 
-Brain is an MCP-oriented toolkit for incremental knowledge-base ingestion, hybrid retrieval, and ingestion status inspection. It exposes three CLIs with four fixed functions. Successful command output is JSON, while live progress is emitted as JSON Lines.
+SimBrain is an MCP-oriented toolkit for incremental knowledge-base ingestion, hybrid retrieval, and ingestion status inspection. It exposes three CLIs with four fixed functions. Successful command output is JSON, while live progress is emitted as JSON Lines.
 
 ## Project Structure
 
 ```text
-Brain/
+SimBrain/
 ├── README.md                         # English documentation
 ├── README_zh-CN.md                   # Simplified Chinese documentation
 ├── pyproject.toml                    # Package metadata, dependencies, CLI entries
 ├── uv.lock                           # Locked dependency versions
 ├── src/
-│   └── brain/
+│   └── simbrain/
 │       ├── __init__.py
 │       ├── cli/
 │       │   ├── __init__.py
-│       │   ├── ingest.py             # brain-ingest
-│       │   ├── search.py             # brain-search
-│       │   └── status.py             # brain-status
+│       │   ├── ingest.py             # simbrain-ingest
+│       │   ├── search.py             # simbrain-search
+│       │   └── status.py             # simbrain-status
 │       ├── serve/
 │       │   ├── __init__.py
-│       │   ├── __main__.py            # brain-mcp entry point
+│       │   ├── __main__.py            # simbrain-mcp entry point
 │       │   └── server.py              # FastMCP server and four tools
 │       ├── documents/
 │       │   ├── __init__.py
@@ -88,7 +88,7 @@ CHUNK_OVERLAP=120
 ## Function 1: Incremental Ingestion
 
 ```bash
-uv run brain-ingest \
+uv run simbrain-ingest \
   --input-dir ./docs \
   --output-dir ./mvp_output \
   --project my-knowledge-base
@@ -126,7 +126,7 @@ mvp_output/
 ## Function 2: List All Projects
 
 ```bash
-uv run brain-status --output-dir ./mvp_output
+uv run simbrain-status --output-dir ./mvp_output
 ```
 
 This scans every valid `manifest.json` below the output directory and returns project descriptions and complete file inventories as JSON. A malformed manifest is returned as an error entry without blocking other projects.
@@ -134,7 +134,7 @@ This scans every valid `manifest.json` below the output directory and returns pr
 ## Function 3: Monitor Ingestion Progress
 
 ```bash
-uv run brain-status \
+uv run simbrain-status \
   --output-dir ./mvp_output \
   --project my-knowledge-base
 ```
@@ -151,7 +151,7 @@ recovering → scanning → parsing → cleaning → chunking
 ## Function 4: Hybrid Retrieval
 
 ```bash
-uv run brain-search \
+uv run simbrain-search \
   --question "How do I configure access permissions?" \
   --project my-knowledge-base \
   --top-k 10
@@ -167,19 +167,19 @@ All three arguments are required, and output is always JSON. Retrieval combines 
 
 ## MCP Server
 
-Brain also exposes the CLI capabilities through a FastMCP server. Start the local
+SimBrain also exposes the CLI capabilities through a FastMCP server. Start the local
 server with the standard input/output transport:
 
 ```bash
-uv run brain-mcp
+uv run simbrain-mcp
 ```
 
 It provides four tools, with the same input and output semantics as the CLIs:
 
-- `brain-ingest(input_dir, output_dir, project)`: incremental ingestion.
-- `brain-status(output_dir)`: list every project.
-- `brain-status-realtime(output_dir, project)`: monitor an ingestion task. Each changed state is sent through MCP logging and progress notifications; the final response contains all observed events.
-- `brain-search(question, project, top_k)`: hybrid retrieval for a project.
+- `simbrain-ingest(input_dir, output_dir, project)`: incremental ingestion.
+- `simbrain-status(output_dir)`: list every project.
+- `simbrain-status-realtime(output_dir, project)`: monitor an ingestion task. Each changed state is sent through MCP logging and progress notifications; the final response contains all observed events.
+- `simbrain-search(question, project, top_k)`: hybrid retrieval for a project.
 
 ## Supported Files
 
@@ -202,5 +202,5 @@ uv run pytest -q
 Unit tests use isolated stores. To additionally run the live Elasticsearch alias, bulk, retrieval, and version-retention integration test:
 
 ```bash
-BRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
+SIMBRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
 ```

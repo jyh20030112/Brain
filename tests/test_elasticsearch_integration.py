@@ -3,9 +3,9 @@ from uuid import uuid4
 
 import pytest
 
-from brain.models import TextChunk
-from brain.storage.client import es_context, run_async
-from brain.storage.elasticsearch_store import ESStore, _docs_index
+from simbrain.models import TextChunk
+from simbrain.storage.client import es_context, run_async
+from simbrain.storage.elasticsearch_store import ESStore, _docs_index
 
 
 pytestmark = pytest.mark.integration
@@ -13,16 +13,16 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def live_store():
-    url = os.getenv("BRAIN_TEST_ES_URL")
+    url = os.getenv("SIMBRAIN_TEST_ES_URL")
     if not url:
-        pytest.skip("set BRAIN_TEST_ES_URL to run live Elasticsearch tests")
+        pytest.skip("set SIMBRAIN_TEST_ES_URL to run live Elasticsearch tests")
     workspace_id = f"integration_{uuid4().hex[:12]}"
     store = ESStore(
         workspace_id,
         es_url=url,
-        es_user=os.getenv("BRAIN_TEST_ES_USERNAME", ""),
-        es_pass=os.getenv("BRAIN_TEST_ES_PASSWORD", ""),
-        es_api_key=os.getenv("BRAIN_TEST_ES_API_KEY", ""),
+        es_user=os.getenv("SIMBRAIN_TEST_ES_USERNAME", ""),
+        es_pass=os.getenv("SIMBRAIN_TEST_ES_PASSWORD", ""),
+        es_api_key=os.getenv("SIMBRAIN_TEST_ES_API_KEY", ""),
         embedding_dim=2,
         index_versions_to_keep=1,
     )
@@ -31,9 +31,9 @@ def live_store():
     async def cleanup():
         async with es_context(
             url=url,
-            username=os.getenv("BRAIN_TEST_ES_USERNAME", ""),
-            password=os.getenv("BRAIN_TEST_ES_PASSWORD", ""),
-            api_key=os.getenv("BRAIN_TEST_ES_API_KEY", ""),
+            username=os.getenv("SIMBRAIN_TEST_ES_USERNAME", ""),
+            password=os.getenv("SIMBRAIN_TEST_ES_PASSWORD", ""),
+            api_key=os.getenv("SIMBRAIN_TEST_ES_API_KEY", ""),
         ) as es:
             await es.options(ignore_status=404).indices.delete(index=f"{_docs_index(workspace_id)}_v_*")
 

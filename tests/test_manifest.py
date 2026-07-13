@@ -1,4 +1,4 @@
-from brain.manifest import build_manifest
+from simbrain.manifest import build_manifest
 
 
 def test_build_manifest_merges_inventory_and_generates_description():

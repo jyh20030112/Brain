@@ -4,14 +4,14 @@ import argparse
 
 from dotenv import load_dotenv
 
-from brain.cli.output import emit_error, emit_json
-from brain.config import Config
-from brain.ingestion import run_ingestion
-from brain.project import ProjectLockedError, validate_project_name
+from simbrain.cli.output import emit_error, emit_json
+from simbrain.config import Config
+from simbrain.ingestion import run_ingestion
+from simbrain.project import ProjectLockedError, validate_project_name
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain-ingest", description="增量解析原始资料并写入知识库")
+    parser = argparse.ArgumentParser(prog="simbrain-ingest", description="增量解析原始资料并写入知识库")
     parser.add_argument("--input-dir", required=True, help="本次新增或更新的资料目录")
     parser.add_argument("--output-dir", required=True, help="project 清单、进度和 MinerU 产物根目录")
     parser.add_argument("--project", required=True, help="知识库 project 名")

@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from brain.progress.models import IngestionJob
-from brain.project import atomic_write_json, read_json
-from brain.utils import utc_now
+from simbrain.progress.models import IngestionJob
+from simbrain.project import atomic_write_json, read_json
+from simbrain.utils import utc_now
 
 
 class FileProgressStore:

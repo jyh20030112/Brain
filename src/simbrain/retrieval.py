@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from brain.config import Config
-from brain.embeddings import EmbeddingClient
-from brain.models import RetrievalOutcome
-from brain.runtime import build_embedding_client, build_es_store
-from brain.storage.elasticsearch_store import ESStore
+from simbrain.config import Config
+from simbrain.embeddings import EmbeddingClient
+from simbrain.models import RetrievalOutcome
+from simbrain.runtime import build_embedding_client, build_es_store
+from simbrain.storage.elasticsearch_store import ESStore
 
 
 class SearchService:

@@ -1,28 +1,28 @@
-# Brain
+# SimBrain
 
 简体中文 | [English](README.md)
 
-Brain 是一个面向 MCP 服务的知识库原始资料增量入库、多路召回与状态查询工具。项目只提供 3 个 CLI、4 个固定功能；成功结果统一输出 JSON，实时进度输出 JSON Lines。
+SimBrain 是一个面向 MCP 服务的知识库原始资料增量入库、多路召回与状态查询工具。项目只提供 3 个 CLI、4 个固定功能；成功结果统一输出 JSON，实时进度输出 JSON Lines。
 
 ## 项目目录
 
 ```text
-Brain/
+SimBrain/
 ├── README.md                         # 英文文档
 ├── README_zh-CN.md                   # 简体中文文档
 ├── pyproject.toml                    # 包信息、依赖和 CLI 入口
 ├── uv.lock                           # 依赖锁文件
 ├── src/
-│   └── brain/
+│   └── simbrain/
 │       ├── __init__.py
 │       ├── cli/
 │       │   ├── __init__.py
-│       │   ├── ingest.py             # brain-ingest 入口
-│       │   ├── search.py             # brain-search 入口
-│       │   └── status.py             # brain-status 入口
+│       │   ├── ingest.py             # simbrain-ingest 入口
+│       │   ├── search.py             # simbrain-search 入口
+│       │   └── status.py             # simbrain-status 入口
 │       ├── serve/
 │       │   ├── __init__.py
-│       │   ├── __main__.py            # brain-mcp 入口
+│       │   ├── __main__.py            # simbrain-mcp 入口
 │       │   └── server.py              # FastMCP 服务与四个工具
 │       ├── documents/
 │       │   ├── __init__.py
@@ -88,7 +88,7 @@ CHUNK_OVERLAP=120
 ## 功能一：增量入库
 
 ```bash
-uv run brain-ingest \
+uv run simbrain-ingest \
   --input-dir ./docs \
   --output-dir ./mvp_output \
   --project my-knowledge-base
@@ -126,7 +126,7 @@ mvp_output/
 ## 功能二：列出全部 project
 
 ```bash
-uv run brain-status --output-dir ./mvp_output
+uv run simbrain-status --output-dir ./mvp_output
 ```
 
 该命令扫描 output 目录下所有合法的 `manifest.json`，以 JSON 返回 project 简介和完整文件清单。损坏的 manifest 会作为带 `error` 的条目返回，不影响其他 project。
@@ -134,7 +134,7 @@ uv run brain-status --output-dir ./mvp_output
 ## 功能三：实时查看入库进度
 
 ```bash
-uv run brain-status \
+uv run simbrain-status \
   --output-dir ./mvp_output \
   --project my-knowledge-base
 ```
@@ -151,7 +151,7 @@ recovering → scanning → parsing → cleaning → chunking
 ## 功能四：指定 project 多路召回
 
 ```bash
-uv run brain-search \
+uv run simbrain-search \
   --question "如何配置访问权限？" \
   --project my-knowledge-base \
   --top-k 10
@@ -170,15 +170,15 @@ uv run brain-search \
 项目使用 FastMCP 将 CLI 能力以 MCP 工具暴露。通过标准输入输出传输启动本地服务：
 
 ```bash
-uv run brain-mcp
+uv run simbrain-mcp
 ```
 
 服务提供四个工具，输入和最终 JSON 输出与相应 CLI 保持一致：
 
-- `brain-ingest(input_dir, output_dir, project)`：增量入库。
-- `brain-status(output_dir)`：列出全部 project。
-- `brain-status-realtime(output_dir, project)`：实时监控指定 project 的入库状态。每次状态变化都会通过 MCP 日志和进度通知发送，最终响应含全部已观察到的事件。
-- `brain-search(question, project, top_k)`：指定 project 的多路召回。
+- `simbrain-ingest(input_dir, output_dir, project)`：增量入库。
+- `simbrain-status(output_dir)`：列出全部 project。
+- `simbrain-status-realtime(output_dir, project)`：实时监控指定 project 的入库状态。每次状态变化都会通过 MCP 日志和进度通知发送，最终响应含全部已观察到的事件。
+- `simbrain-search(question, project, top_k)`：指定 project 的多路召回。
 
 ## 支持文件
 
@@ -201,5 +201,5 @@ uv run pytest -q
 单元测试使用隔离的 fake store。如需额外验证真实 Elasticsearch 的 bulk、alias、召回和旧版本回收链路：
 
 ```bash
-BRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
+SIMBRAIN_TEST_ES_URL=http://localhost:9200 uv run pytest -q -m integration
 ```

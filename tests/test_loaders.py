@@ -1,5 +1,5 @@
-from brain.documents import loaders
-from brain.models import DocumentPage
+from simbrain.documents import loaders
+from simbrain.models import DocumentPage
 
 
 def test_mineru_artifact_is_written_under_project_directory(monkeypatch, tmp_path):

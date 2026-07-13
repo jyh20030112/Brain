@@ -1,7 +1,7 @@
 import pytest
 
-from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
-from brain.retrieval import SearchService
+from simbrain.models import RetrievalOutcome, RetrievedChunk, TextChunk
+from simbrain.retrieval import SearchService
 
 
 class FakeEmbeddingClient:

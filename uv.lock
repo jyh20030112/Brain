@@ -198,45 +198,6 @@ wheels = [
 ]
 
 [[package]]
-name = "brain"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "elasticsearch", extra = ["async"] },
-    { name = "fastmcp" },
-    { name = "filelock" },
-    { name = "mineru-open-sdk" },
-    { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-    { name = "python-dotenv" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "elasticsearch", extras = ["async"], specifier = ">=8.0.0" },
-    { name = "fastmcp", specifier = ">=3.0.0,<4.0.0" },
-    { name = "filelock", specifier = ">=3.16.0" },
-    { name = "mineru-open-sdk", specifier = ">=0.2.5" },
-    { name = "openai", specifier = ">=1.0.0" },
-    { name = "openpyxl", specifier = ">=3.0.0" },
-    { name = "pandas", specifier = ">=2.0.0" },
-    { name = "pypdf", specifier = ">=4.0.0" },
-    { name = "python-docx", specifier = ">=1.0.0" },
-    { name = "python-dotenv", specifier = ">=1.2.2" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0.0" }]
-
-[[package]]
 name = "cachetools"
 version = "7.1.4"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -1965,6 +1926,45 @@ sdist = { url = "https://mirrors.aliyun.com/pypi/packages/1c/03/e834bcd866f2f8a4
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137" },
 ]
+
+[[package]]
+name = "simbrain"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "elasticsearch", extra = ["async"] },
+    { name = "fastmcp" },
+    { name = "filelock" },
+    { name = "mineru-open-sdk" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "elasticsearch", extras = ["async"], specifier = ">=8.0.0" },
+    { name = "fastmcp", specifier = ">=3.0.0,<4.0.0" },
+    { name = "filelock", specifier = ">=3.16.0" },
+    { name = "mineru-open-sdk", specifier = ">=0.2.5" },
+    { name = "openai", specifier = ">=1.0.0" },
+    { name = "openpyxl", specifier = ">=3.0.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "pypdf", specifier = ">=4.0.0" },
+    { name = "python-docx", specifier = ">=1.0.0" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0.0" }]
 
 [[package]]
 name = "six"

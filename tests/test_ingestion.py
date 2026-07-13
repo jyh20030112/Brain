@@ -3,10 +3,10 @@ from collections import Counter
 
 import pytest
 
-from brain.config import Config
-from brain.ingestion import _recover_pending_manifest, run_ingestion
-from brain.manifest import write_pending_manifest
-from brain.storage.elasticsearch_store import PublishResult
+from simbrain.config import Config
+from simbrain.ingestion import _recover_pending_manifest, run_ingestion
+from simbrain.manifest import write_pending_manifest
+from simbrain.storage.elasticsearch_store import PublishResult
 
 
 class FakeEmbeddingClient:
@@ -91,8 +91,8 @@ def _config(input_dir, output_dir):
 
 
 def _install_fakes(monkeypatch, es):
-    monkeypatch.setattr("brain.ingestion.build_embedding_client", lambda cfg: FakeEmbeddingClient())
-    monkeypatch.setattr("brain.ingestion.build_es_store", lambda cfg: es)
+    monkeypatch.setattr("simbrain.ingestion.build_embedding_client", lambda cfg: FakeEmbeddingClient())
+    monkeypatch.setattr("simbrain.ingestion.build_es_store", lambda cfg: es)
 
 
 def test_incremental_ingestion_retains_files_missing_from_second_input(monkeypatch, tmp_path, capsys):

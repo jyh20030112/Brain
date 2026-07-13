@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from brain.storage.elasticsearch_store import (
+from simbrain.storage.elasticsearch_store import (
     ESStore,
     ProjectNotFoundError,
     RetrievalFailedError,
     _docs_index,
 )
-from brain.models import TextChunk
+from simbrain.models import TextChunk
 
 
 def _chunk() -> TextChunk:
@@ -134,8 +134,8 @@ def test_incremental_publish_replaces_matching_file_and_switches_alias(monkeypat
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
-    monkeypatch.setattr("brain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.es_context", fake_context)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
     store = ESStore("wid", embedding_dim=2)
 
     async def fake_inventory(es, index):
@@ -181,8 +181,8 @@ def test_incremental_publish_keeps_current_alias_when_bulk_write_fails(monkeypat
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
-    monkeypatch.setattr("brain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.es_context", fake_context)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
 
     with pytest.raises(RuntimeError, match="批量入库失败"):
         ESStore("wid", embedding_dim=2).publish_incremental(
@@ -206,8 +206,8 @@ def test_incremental_publish_removes_obsolete_index_versions(monkeypatch):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
-    monkeypatch.setattr("brain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.es_context", fake_context)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.async_streaming_bulk", fake_streaming_bulk)
     store = ESStore("wid", embedding_dim=2, index_versions_to_keep=1)
     monkeypatch.setattr(store, "_inventory", lambda es, index: _async_value([{"file_name": "source.md", "chunk_count": 1}]))
 
@@ -263,7 +263,7 @@ def _install_search_client(monkeypatch, client):
     async def fake_context(**kwargs):
         yield client
 
-    monkeypatch.setattr("brain.storage.elasticsearch_store.es_context", fake_context)
+    monkeypatch.setattr("simbrain.storage.elasticsearch_store.es_context", fake_context)
 
 
 def test_search_rejects_missing_project(monkeypatch):

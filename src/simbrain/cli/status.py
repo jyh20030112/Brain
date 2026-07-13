@@ -6,15 +6,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from brain.cli.output import emit_error, emit_json
-from brain.manifest import MANIFEST_NAME
-from brain.progress.file_store import FileProgressStore
-from brain.progress.models import IngestionJob
-from brain.project import get_project_dir, read_json, validate_project_name
+from simbrain.cli.output import emit_error, emit_json
+from simbrain.manifest import MANIFEST_NAME
+from simbrain.progress.file_store import FileProgressStore
+from simbrain.progress.models import IngestionJob
+from simbrain.project import get_project_dir, read_json, validate_project_name
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain-status", description="列出 project 清单或实时监控指定 project")
+    parser = argparse.ArgumentParser(prog="simbrain-status", description="列出 project 清单或实时监控指定 project")
     parser.add_argument("--output-dir", required=True, help="project 产物根目录")
     parser.add_argument("--project", help="指定后持续监控该 project；不指定时列出全部 project")
     return parser

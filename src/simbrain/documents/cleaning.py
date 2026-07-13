@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from brain.models import DocumentPage, DocumentRecord
+from simbrain.models import DocumentPage, DocumentRecord
 
 
 _CONTROL_CHARS = re.compile(r"[\x01-\x08\x0b-\x1f\x7f-\x9f]")

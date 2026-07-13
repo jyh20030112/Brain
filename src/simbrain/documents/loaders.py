@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from brain.models import DocumentPage, DocumentRecord
-from brain.utils import _short_hash
+from simbrain.models import DocumentPage, DocumentRecord
+from simbrain.utils import _short_hash
 
 
 def _load_pdf_pypdf(file_path: Path) -> list[DocumentPage]:

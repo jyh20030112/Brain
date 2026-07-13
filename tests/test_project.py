@@ -1,6 +1,6 @@
 import pytest
 
-from brain.project import ProjectLock, ProjectLockedError, atomic_write_json, read_json, validate_project_name
+from simbrain.project import ProjectLock, ProjectLockedError, atomic_write_json, read_json, validate_project_name
 
 
 @pytest.mark.parametrize("value", ["", ".", "..", "a/b", "a\\b", "bad\x00name", "x" * 129])

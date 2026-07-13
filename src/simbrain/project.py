@@ -71,7 +71,7 @@ class ProjectLock:
     """同一主机上按 workspace 加锁，同时保留 project 目录锁文件。"""
 
     def __init__(self, workspace_id: str, project_dir: Path, *, lock_root: Path | None = None):
-        root = lock_root or Path(tempfile.gettempdir()) / "brain-ingest-locks"
+        root = lock_root or Path(tempfile.gettempdir()) / "simbrain-ingest-locks"
         self.path = root / f"{workspace_id}.lock"
         self.project_path = project_dir / ".ingest.lock"
         self._global_lock = FileLock(str(self.path))

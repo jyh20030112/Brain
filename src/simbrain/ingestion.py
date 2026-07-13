@@ -5,12 +5,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from brain.config import Config
-from brain.constants import SUPPORTED_EXTENSIONS
-from brain.documents.chunking import chunk_docs
-from brain.documents.cleaning import clean_docs
-from brain.documents.loaders import load_docs
-from brain.manifest import (
+from simbrain.config import Config
+from simbrain.constants import SUPPORTED_EXTENSIONS
+from simbrain.documents.chunking import chunk_docs
+from simbrain.documents.cleaning import clean_docs
+from simbrain.documents.loaders import load_docs
+from simbrain.manifest import (
     build_manifest,
     discard_pending_manifest,
     file_records_by_name,
@@ -19,10 +19,10 @@ from brain.manifest import (
     load_pending_manifest,
     write_pending_manifest,
 )
-from brain.progress.file_store import FileProgressStore
-from brain.project import ProjectLock, get_project_dir, sha256_file
-from brain.runtime import build_embedding_client, build_es_store
-from brain.utils import utc_now
+from simbrain.progress.file_store import FileProgressStore
+from simbrain.project import ProjectLock, get_project_dir, sha256_file
+from simbrain.runtime import build_embedding_client, build_es_store
+from simbrain.utils import utc_now
 
 
 class ManifestSyncError(RuntimeError):

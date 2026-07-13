@@ -4,16 +4,16 @@ import argparse
 
 from dotenv import load_dotenv
 
-from brain.cli.output import emit_error, emit_json
-from brain.config import Config
-from brain.models import RetrievedChunk
-from brain.project import validate_project_name
-from brain.retrieval import SearchService
-from brain.storage.elasticsearch_store import ProjectNotFoundError, RetrievalFailedError
+from simbrain.cli.output import emit_error, emit_json
+from simbrain.config import Config
+from simbrain.models import RetrievedChunk
+from simbrain.project import validate_project_name
+from simbrain.retrieval import SearchService
+from simbrain.storage.elasticsearch_store import ProjectNotFoundError, RetrievalFailedError
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="brain-search", description="在指定 project 中多路召回原始知识块")
+    parser = argparse.ArgumentParser(prog="simbrain-search", description="在指定 project 中多路召回原始知识块")
     parser.add_argument("--question", required=True, help="查询问题或关键词")
     parser.add_argument("--project", required=True, help="知识库 project 名")
     parser.add_argument("--top-k", required=True, type=int, help="RRF 融合后最终返回数量，范围 1-100")

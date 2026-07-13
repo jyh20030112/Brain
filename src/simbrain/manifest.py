@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from brain.project import atomic_write_json, read_json
-from brain.utils import utc_now
+from simbrain.project import atomic_write_json, read_json
+from simbrain.utils import utc_now
 
 
 SCHEMA_VERSION = 1

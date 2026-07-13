@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from brain.cli import ingest, search, status
-from brain.models import RetrievalOutcome, RetrievedChunk, TextChunk
-from brain.progress.models import IngestionJob
-from brain.project import atomic_write_json
+from simbrain.cli import ingest, search, status
+from simbrain.models import RetrievalOutcome, RetrievedChunk, TextChunk
+from simbrain.progress.models import IngestionJob
+from simbrain.project import atomic_write_json
 
 
 def _result() -> RetrievedChunk:
