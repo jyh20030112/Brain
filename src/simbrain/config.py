@@ -12,16 +12,16 @@ class Config:
     output_dir: str = "mvp_output"
 
     # ---- Embedding ----
-    embedding_provider: str = "openai"
-    embedding_url: str = ""
+    embedding_provider: str = "ollama"
+    embedding_url: str = "http://localhost:11434"
     embedding_api_key: str = ""
-    embedding_model: str = ""
+    embedding_model: str = "bge-m3"
     embedding_dim: int = 1024
 
     # ---- Elasticsearch (Cloud ID / URL + 认证) ----
     es_cloud_id: str = ""
     es_url: str = ""
-    es_username: str = ""
+    es_username: str = "elastic"
     es_password: str = ""
     es_api_key: str = ""
     es_index_versions_to_keep: int = 2
@@ -82,15 +82,15 @@ class Config:
             input_dir=os.getenv("INPUT_DIR", "./docs/"),
             project=os.getenv("PROJECT", "default-knowledge-base"),
             output_dir=os.getenv("OUTPUT_DIR", "mvp_output"),
-            embedding_provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
-            embedding_url=os.getenv("EMBEDDING_URL", ""),
+            embedding_provider=os.getenv("EMBEDDING_PROVIDER", "ollama"),
+            embedding_url=os.getenv("EMBEDDING_URL", "http://localhost:11434"),
             # 兼容原先复用 LLM_API_KEY 的部署；新配置应使用 EMBEDDING_API_KEY。
             embedding_api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "")),
             embedding_model=os.getenv("EMBEDDING_MODEL", "bge-m3"),
             embedding_dim=int(os.getenv("EMBEDDING_DIM", "1024")),
             es_cloud_id=os.getenv("ES_CLOUD_ID", ""),
             es_url=os.getenv("ES_URL", ""),
-            es_username=os.getenv("ES_USERNAME", ""),
+            es_username=os.getenv("ES_USERNAME", "elastic"),
             es_password=os.getenv("ES_PASSWORD", ""),
             es_api_key=os.getenv("ES_API_KEY", ""),
             es_index_versions_to_keep=int(os.getenv("ES_INDEX_VERSIONS_TO_KEEP", "2")),
