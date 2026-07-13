@@ -4,4 +4,7 @@ __pycache__/
 mvp_output/
 .env
 .claude
+
 docs
+
+output

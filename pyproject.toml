@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=1.0.0",
+    "fastmcp>=3.0.0,<4.0.0",
     "elasticsearch[async]>=8.0.0",
     "pypdf>=4.0.0",
     "python-docx>=1.0.0",
@@ -20,6 +21,7 @@ dependencies = [
 brain-ingest = "brain.cli.ingest:main"
 brain-search = "brain.cli.search:main"
 brain-status = "brain.cli.status:main"
+brain-mcp = "brain.serve.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

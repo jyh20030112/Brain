@@ -20,6 +20,10 @@ Brain/
 │       │   ├── ingest.py             # brain-ingest
 │       │   ├── search.py             # brain-search
 │       │   └── status.py             # brain-status
+│       ├── serve/
+│       │   ├── __init__.py
+│       │   ├── __main__.py            # brain-mcp entry point
+│       │   └── server.py              # FastMCP server and four tools
 │       ├── documents/
 │       │   ├── __init__.py
 │       │   ├── loaders.py            # File loading and MinerU parsing
@@ -160,6 +164,24 @@ All three arguments are required, and output is always JSON. Retrieval combines 
 - Results include the filename, source path, page, section, original text, retrieval method, and RRF score.
 - A missing project returns `project_not_found`. If one route fails, successful output contains a `warnings` array; if both routes fail, the command returns `retrieval_failed` with a non-zero exit code.
 - The command retrieves original chunks only; it does not generate an LLM answer.
+
+## MCP Server
+
+Brain also exposes the CLI capabilities through a FastMCP Streamable HTTP server:
+
+```bash
+uv run brain-mcp
+```
+
+The server listens on `0.0.0.0:2418`; connect MCP clients to
+`http://<host>:2418/mcp`.
+
+It provides four tools, with the same input and output semantics as the CLIs:
+
+- `brain-ingest(input_dir, output_dir, project)`: incremental ingestion.
+- `brain-status(output_dir)`: list every project.
+- `brain-status-realtime(output_dir, project)`: monitor an ingestion task. Each changed state is sent through MCP logging and progress notifications; the final response contains all observed events.
+- `brain-search(question, project, top_k)`: hybrid retrieval for a project.
 
 ## Supported Files
 

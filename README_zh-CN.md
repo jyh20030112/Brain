@@ -20,6 +20,10 @@ Brain/
 │       │   ├── ingest.py             # brain-ingest 入口
 │       │   ├── search.py             # brain-search 入口
 │       │   └── status.py             # brain-status 入口
+│       ├── serve/
+│       │   ├── __init__.py
+│       │   ├── __main__.py            # brain-mcp 入口
+│       │   └── server.py              # FastMCP 服务与四个工具
 │       ├── documents/
 │       │   ├── __init__.py
 │       │   ├── loaders.py            # 文件加载与 MinerU 解析
@@ -160,6 +164,24 @@ uv run brain-search \
 - 结果包含文件名、来源路径、页码、章节、原始正文、召回方法和 RRF 分数。
 - project 不存在时返回 `project_not_found`；单路召回失败时成功结果包含 `warnings`，两路全部失败时返回 `retrieval_failed` 和非零退出码。
 - 只召回原始知识块，不执行 LLM 答案生成。
+
+## MCP 服务
+
+项目使用 FastMCP 将 CLI 能力以 Streamable HTTP MCP 工具暴露：
+
+```bash
+uv run brain-mcp
+```
+
+服务固定监听 `0.0.0.0:2418`，MCP 客户端连接地址为
+`http://<host>:2418/mcp`。
+
+服务提供四个工具，输入和最终 JSON 输出与相应 CLI 保持一致：
+
+- `brain-ingest(input_dir, output_dir, project)`：增量入库。
+- `brain-status(output_dir)`：列出全部 project。
+- `brain-status-realtime(output_dir, project)`：实时监控指定 project 的入库状态。每次状态变化都会通过 MCP 日志和进度通知发送，最终响应含全部已观察到的事件。
+- `brain-search(question, project, top_k)`：指定 project 的多路召回。
 
 ## 支持文件
 
