@@ -23,13 +23,13 @@ def test_mcp_server_exposes_four_brain_tools():
     }
 
 
-def test_mcp_entrypoint_uses_configured_http_transport(monkeypatch):
+def test_mcp_entrypoint_uses_default_stdio_transport(monkeypatch):
     captured: dict[str, object] = {}
     monkeypatch.setattr(serve_main.mcp, "run", lambda **kwargs: captured.update(kwargs))
 
     serve_main.main()
 
-    assert captured == {"transport": "http", "host": "0.0.0.0", "port": 2418, "path": "/mcp"}
+    assert captured == {}
 
 
 def test_status_tool_returns_the_cli_catalog_payload(tmp_path: Path):

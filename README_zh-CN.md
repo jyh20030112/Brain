@@ -167,14 +167,11 @@ uv run brain-search \
 
 ## MCP 服务
 
-项目使用 FastMCP 将 CLI 能力以 Streamable HTTP MCP 工具暴露：
+项目使用 FastMCP 将 CLI 能力以 MCP 工具暴露。通过标准输入输出传输启动本地服务：
 
 ```bash
 uv run brain-mcp
 ```
-
-服务固定监听 `0.0.0.0:2418`，MCP 客户端连接地址为
-`http://<host>:2418/mcp`。
 
 服务提供四个工具，输入和最终 JSON 输出与相应 CLI 保持一致：
 

@@ -167,14 +167,12 @@ All three arguments are required, and output is always JSON. Retrieval combines 
 
 ## MCP Server
 
-Brain also exposes the CLI capabilities through a FastMCP Streamable HTTP server:
+Brain also exposes the CLI capabilities through a FastMCP server. Start the local
+server with the standard input/output transport:
 
 ```bash
 uv run brain-mcp
 ```
-
-The server listens on `0.0.0.0:2418`; connect MCP clients to
-`http://<host>:2418/mcp`.
 
 It provides four tools, with the same input and output semantics as the CLIs:
 
